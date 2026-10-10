@@ -117,3 +117,4 @@ description: >
 - 测试归属表 / 5 维打分 / e2e 三层流转：`refs/design-doc-principles.md §四`
 - e2e 宿主 / 检索先行 / 结果完整性红线：`refs/test-suite-hygiene.md §四点一 / §四点二 / §九`
 - DDL 自执行 / 审查判档 / 返工批处理：`rules/executor-handoff.md`
+- `flow` 按门编号引用本骨架做阶段导航

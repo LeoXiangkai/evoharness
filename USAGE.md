@@ -20,6 +20,8 @@
 - 需求不成熟别硬写 PRD，先 `req-intake`；说不清就让 `grilling` 追问。
 - 改文件前先建 worktree，收口走 `git-commit`。
 
+质量门按任务规模分档：小改只过门2 自审，轻改过门1 轻量 + 门2 + 门3，中改/完整流程门1–门4 全过（判据见 `sdd-pipeline`）。`flow` 输出的「门状态」取 通过 / 未过 / 未记录，`未记录` 表示缺证据，不等同于通过。
+
 `grilling` 为可选增强：未安装时 `req-intake` / `flow` 降级为直接问答。
 
 ## Initialize A Target Java Project
