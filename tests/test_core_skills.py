@@ -54,3 +54,22 @@ def test_core_markdown_internal_references_resolve() -> None:
             if not local.is_file() and not (CORE / ref).is_file():
                 broken.append(f"{path.relative_to(REPO)} -> {ref}")
     assert broken == [], "broken core references:\n" + "\n".join(broken)
+
+
+def test_flow_stage_gates_status_and_tiers() -> None:
+    text = (SKILLS / "flow" / "SKILL.md").read_text(encoding="utf-8")
+    for gate in ("门1", "门2", "门3", "门4"):
+        assert gate in text, f"flow must reference {gate}"
+    for column in ("出口门", "证据"):
+        assert f"| {column} |" in text, f"flow stage table must have {column} column"
+    for status in ("通过", "未过", "未记录"):
+        assert status in text, f"flow must offer gate status {status}"
+    assert re.search(r"未记录[^。\n]{0,60}不等同(?:于)?通过", text), (
+        "flow must state that 未记录 does not mean passed"
+    )
+    assert "规模分档" in text, "flow must document gate tiers by task size"
+    assert "小改" in text and "门1 轻量" in text, "flow must list tier gate sets"
+    assert "不得强拉完整流程" in text, "flow must keep the no-forced-full-flow rule"
+    lowered = text.lower()
+    for forbidden in ("ledger", "台账", "~/.claude"):
+        assert forbidden not in lowered, f"flow must not reference {forbidden}"

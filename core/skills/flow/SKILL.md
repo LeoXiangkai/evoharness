@@ -14,15 +14,27 @@ description: 阶段导航：根据 work-id 和已有产物判断当前研发阶�
 
 ## 阶段表
 
-| 阶段 | 产物文件 | 完成判据 | 下一步 skill/命令 |
-|---|---|---|---|
-| 需求 | `requirement-brief.md` 或 PRD | 目标、范围、非目标、验收和待确认项清楚 | `req-intake`；业务知识库影响分析用 `req-analysis`；完整多 Story 用 `prd` |
-| 设计 | `design-brief.md`（按 `docs/design-first-policy.md` 该有才有） | 影响、边界、接口/数据方案与风险可追溯 | `add-module` 或 `auto-sdd` |
-| 计划与测试 | `implementation-plan.md`、`test-plan.md`、`test-case-brief.md` | 任务、测试层级和验收证据可执行 | `auto-sdd` |
-| 实现 | 代码 diff；查看 `git status`、`git log` 与 worktree | 需求点有对应代码变更且范围可解释 | `local-verify` |
-| 验证评审 | 验证证据、review 结论、`delivery-report` | 测试结果和未测试项明确，评审结论已记录 | `code-review`；随后 `git-commit` |
-| 发布 | `release-impact.md` | 发布影响、回滚和环境验收证据齐全 | `automate-test-handoff`（若已安装） |
-| 沉淀 | `handoff.md` 或知识候选 | 可复用结论、边界和后续入口已记录 | 按需结束或回到 `flow` |
+出口门 = 本阶段收口时必须通过的门，编号与判据来自 `sdd-pipeline`（门1 需求冻结 / 门2 设计/编码 / 门3 QA证据 / 门4 验收判据）。判据正文只在 `sdd-pipeline` 写一份，此处只按门编号引用，不复制判据；有出口门的阶段，完成判据以对应门判据为准。无独立门的阶段标 `—`。
+
+| 阶段 | 产物文件 | 出口门 | 证据 | 完成判据 | 下一步 skill/命令 |
+|---|---|---|---|---|---|
+| 需求 | `requirement-brief.md` 或 PRD | 门1 需求冻结 | 需求卡或需求简报 | 以门1 判据为准（见 `sdd-pipeline`） | `req-intake`；业务知识库影响分析用 `req-analysis`；完整多 Story 用 `prd` |
+| 设计 | `design-brief.md`（按 `docs/design-first-policy.md` 该有才有） | — | — | 影响、边界、接口/数据方案与风险可追溯 | `add-module` 或 `auto-sdd` |
+| 计划与测试 | `implementation-plan.md`、`test-plan.md`、`test-case-brief.md` | — | — | 任务、测试层级和验收证据可执行 | `auto-sdd` |
+| 实现 | 代码 diff；查看 `git status`、`git log` 与 worktree | 门2 设计/编码 | diff 自审结论 | 以门2 判据为准（见 `sdd-pipeline`） | `local-verify` |
+| 验证评审 | 验证证据、review 结论、`delivery-report` | 门3 QA证据 | 测试报告或原始输出 | 以门3 判据为准（见 `sdd-pipeline`） | `code-review`；随后 `git-commit` |
+| 发布 | `release-impact.md` | 门4 验收判据 | 覆盖矩阵与判档结论 | 以门4 判据为准（见 `sdd-pipeline`） | `automate-test-handoff`（若已安装） |
+| 沉淀 | `handoff.md` 或知识候选 | — | — | 可复用结论、边界和后续入口已记录 | 按需结束或回到 `flow` |
+
+## 规模分档
+
+读取任务已有的分档结果（需求卡或交付说明中的标注），不自行判档；没有分档信息时按「完整流程」提示，由使用者降档，不得强拉完整流程。
+
+| 档 | 过哪些门 | 备注 |
+|---|---|---|
+| 小改（文档/配置/≤5 行零风险） | 仅门2 | 门3 以一次实际运行或检查代替 |
+| 轻改（单模块、无高风险信号） | 门1 轻量 + 门2 + 门3 | 门4 合并进收口汇报 |
+| 中改 / 完整流程 | 门1–门4 全过 | 完整流程由 `add-module` / `auto-sdd` 驱动，本身已含四门 |
 
 ## 目标或阶段判不出时
 
@@ -32,10 +44,18 @@ description: 阶段导航：根据 work-id 和已有产物判断当前研发阶�
 
 ```text
 阶段条：需求 ⏳ | 设计 ⬜ | 计划与测试 ⬜ | 实现 ⬜ | 验证评审 ⬜ | 发布 ⬜ | 沉淀 ⬜
+门状态：<已走到的门逐个标注，如“门1 未记录”；取值 通过 / 未过 / 未记录；没有已走到的门写“无”>
 当前阶段：<阶段>
 缺失产物：<文件或“无”>
 建议下一步：<唯一一个入口>
 可跳过阶段：<阶段及理由，或“无”>
 ```
+
+门状态规则：
+
+- 只列已经走到的门，每个门标 `通过` / `未过` / `未记录`。
+- `未记录` 表示仓库内没有可核对的证据，不等同于通过。
+- 门是否通过只依据仓库内产物、git 状态与测试证据判断；缺证据就如实标 `未记录`。
+- 上一阶段的出口门未过或未记录时，建议下一步写「补齐该门证据」，不继续往下走。
 
 状态符号：`✅已完成`、`⏳进行中`、`⬜未开始`、`➖按规模可跳过`。文档、配置或 ≤5 行零风险小任务可提示跳过前置阶段；不得强拉完整流程。skill 不存在或未安装时，说明缺失并给出同一阶段的人工只读判断方式，不引用清单外的 skill。
