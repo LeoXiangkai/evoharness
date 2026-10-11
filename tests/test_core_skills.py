@@ -70,6 +70,11 @@ def test_flow_stage_gates_status_and_tiers() -> None:
     assert "规模分档" in text, "flow must document gate tiers by task size"
     assert "小改" in text and "门1 轻量" in text, "flow must list tier gate sets"
     assert "不得强拉完整流程" in text, "flow must keep the no-forced-full-flow rule"
+    pipeline = (SKILLS / "sdd-pipeline" / "SKILL.md").read_text(encoding="utf-8")
+    for gate in ("门1", "门2", "门3", "门4"):
+        assert re.search(rf"^## {gate} ·", pipeline, re.M), (
+            f"sdd-pipeline must define a section for {gate} that flow cites"
+        )
     lowered = text.lower()
     for forbidden in ("ledger", "台账", "~/.claude"):
         assert forbidden not in lowered, f"flow must not reference {forbidden}"
