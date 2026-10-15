@@ -28,3 +28,14 @@ def test_marked_fixture_dir_is_skipped_for_files_and_dirs(tmp_path):
         result = run(target)
         assert result.returncode == 0
         assert "Scanned files: 0" in result.stdout
+
+
+def test_plaintext_config_is_allowed_but_java_logic_is_blocked(tmp_path):
+    config = tmp_path / "application.yml"
+    config.write_text("password: abcdefgh1234\n", encoding="utf-8")
+    source = tmp_path / "Service.java"
+    source.write_text('class Service { String password = "abcdefgh1234"; }\n', encoding="utf-8")
+    result = run(tmp_path)
+    assert result.returncode == 2
+    assert "Service.java" in result.stdout
+    assert "application.yml" not in result.stdout

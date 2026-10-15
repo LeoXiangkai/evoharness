@@ -13,6 +13,7 @@ DEFAULT_EXTS = {
     ".properties",
     ".sql",
 }
+SECRET_EXTS = {".java", ".kt", ".py", ".ts", ".tsx", ".js", ".jsx", ".vue", ".go"}
 SKIP_DIRS = {
     ".git",
     ".idea",
@@ -80,8 +81,9 @@ def check_file(path: Path, findings: list[tuple[str, Path, int, str]]) -> None:
     except UnicodeDecodeError:
         text = path.read_text(encoding="utf-8", errors="ignore")
 
-    for match in SECRET_RE.finditer(text):
-        add(findings, "P0", path, line_no(text, match.start()), "possible plaintext secret or credential")
+    if path.suffix.lower() in SECRET_EXTS:
+        for match in SECRET_RE.finditer(text):
+            add(findings, "P0", path, line_no(text, match.start()), "possible plaintext secret or credential")
 
     if path.suffix == ".xml":
         for match in MYBATIS_DOLLAR_RE.finditer(text):
@@ -118,4 +120,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
-

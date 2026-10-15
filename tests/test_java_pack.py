@@ -103,6 +103,17 @@ def test_static_review_jakarta_namespace_flag_is_explicit():
     assert "legacy javax import" in result.stdout
 
 
+def test_static_review_allows_plaintext_config_but_reports_java_secret(tmp_path: Path):
+    config = tmp_path / "application.yml"
+    config.write_text("password: abcdefgh1234\n", encoding="utf-8")
+    source = tmp_path / "Config.java"
+    source.write_text('class Config { String password = "abcdefgh1234"; }\n', encoding="utf-8")
+    result = subprocess.run([sys.executable, str(STATIC), str(tmp_path)], capture_output=True, text=True, encoding="utf-8")
+    assert result.returncode == 1
+    assert "Config.java" in result.stdout
+    assert "application.yml" not in result.stdout
+
+
 def test_resolve_packs_auto_detects_java_files(tmp_path: Path):
     (tmp_path / "pom.xml").write_text("<project/>", encoding="utf-8")
     assert index.resolve_packs("auto", tmp_path, ["java"], False) == ["java"]

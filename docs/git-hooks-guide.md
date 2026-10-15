@@ -38,7 +38,7 @@ python3 .ai-coding-java/scripts/static_review_check.py --include-docs <staged fi
 
 当前检查：
 
-1. 疑似明文密钥或凭据。
+1. 代码逻辑文件中疑似硬编码明文密钥或凭据（配置文件允许明文配置）。
 2. MyBatis `${}` 动态拼接。
 3. `update/delete` 缺少 `where`。
 4. `@Transactional` 缺少 `rollbackFor`。

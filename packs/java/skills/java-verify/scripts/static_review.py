@@ -8,6 +8,7 @@ import sys
 from pathlib import Path
 
 EXTENSIONS = {".java", ".xml", ".sql", ".yml", ".yaml", ".properties"}
+SECRET_EXTENSIONS = {".java", ".kt", ".py", ".ts", ".tsx", ".js", ".jsx", ".vue", ".go"}
 SKIP_DIRS = {".git", ".idea", ".vscode", ".omx", "target", "build", "dist", "node_modules", "__pycache__"}
 SECRET_RE = re.compile(r"(?i)(password|passwd|secret|token|access[_-]?key|private[_-]?key)\s*[:=]\s*['\"]?(?![$<{\[(])[A-Za-z0-9_./+\-=]{8,}")
 DOLLAR_RE = re.compile(r"\$\{[^}]+}")
@@ -58,8 +59,9 @@ def namespace_for(paths, requested):
 
 def check_file(path, findings, namespace):
     text = path.read_text(encoding="utf-8", errors="ignore")
-    for match in SECRET_RE.finditer(text):
-        add(findings, "P0", path, line_no(text, match.start()), "possible plaintext secret or credential")
+    if path.suffix.lower() in SECRET_EXTENSIONS:
+        for match in SECRET_RE.finditer(text):
+            add(findings, "P0", path, line_no(text, match.start()), "possible plaintext secret or credential")
     if path.suffix == ".xml":
         for match in DOLLAR_RE.finditer(text):
             add(findings, "P0", path, line_no(text, match.start()), "MyBatis ${} requires whitelist proof")
