@@ -16,7 +16,7 @@ P2：记录建议，不阻断。
 
 | ID | 规则 | 触发 |
 |---|---|---|
-| P0-SEC-001 | 禁止明文密码、token、密钥、生产凭据 | 任意代码、配置、脚本、日志 |
+| P0-SEC-001 | 禁止在代码逻辑文件中硬编码密码、token、密钥、生产凭据；配置文件允许明文配置 | 代码逻辑文件（Java/Kotlin/Python/TypeScript/JavaScript/Vue/Go 等） |
 | P0-SQL-001 | 禁止 SQL 注入风险 | Mapper XML、SQL 拼接、动态排序 |
 | P0-SQL-002 | 禁止无业务 where 的 update/delete | SQL、Mapper、数据脚本 |
 | P0-DATA-001 | 禁止遗漏项目数据隔离条件 | 租户、组织、学校、年度、区域等边界 |

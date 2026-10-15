@@ -122,6 +122,17 @@ def test_static_review_syntax_error_is_reported_without_crash():
     assert "parse failed" in result.stdout
 
 
+def test_static_review_allows_plaintext_config_but_reports_python_secret(tmp_path: Path):
+    config = tmp_path / "application.yml"
+    config.write_text("password: abcdefgh1234\n", encoding="utf-8")
+    source = tmp_path / "settings.py"
+    source.write_text('password = "abcdefgh1234"\n', encoding="utf-8")
+    result = subprocess.run([sys.executable, str(STATIC), str(tmp_path)], capture_output=True, text=True, encoding="utf-8")
+    assert result.returncode == 1
+    assert "settings.py" in result.stdout
+    assert "application.yml" not in result.stdout
+
+
 def test_resolve_packs_auto_detects_python_files(tmp_path: Path):
     (tmp_path / "pyproject.toml").write_text("[project]\nname='x'\n", encoding="utf-8")
     assert index.resolve_packs("auto", tmp_path, ["python"], False) == ["python"]
