@@ -28,7 +28,7 @@ SKIP_DIRS = {
 # a directory holding this file contains deliberately bad samples (checker fixtures); skip it
 FIXTURE_MARKER = ".static-review-fixture"
 SECRET_RE = re.compile(
-    r"""(?i)(?:password|passwd|secret|token|access[_-]?key|private[_-]?key)\w*['"]?(?:(?:[ \t]*:[ \t]*[\w.<>\[\]?]+)?[ \t]*=|[ \t]*:)[ \t]*(?:'(?![$<{\[(])[^'\s]{8,}'|"(?![$<{\[(])[^"\s]{8,}")"""
+    r"""(?i)(?:password|passwd|secret|token|access[_-]?key|private[_-]?key)(?:[_-]?(?:key|value|str|string))?\b['"]?(?:(?:[ \t]*:[ \t]*[\w.<>\[\]?]+)?[ \t]*=|[ \t]*:)[ \t]*(?:'(?![$<{\[(])[^'\s]{8,}'|"(?![$<{\[(])[^"\s]{8,}")"""
 )
 MYBATIS_DOLLAR_RE = re.compile(r"\$\{[^}]+}")
 TRANSACTIONAL_RE = re.compile(r"@Transactional(?!\s*\([^)]*rollbackFor\s*=)")

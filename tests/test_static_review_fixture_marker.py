@@ -79,3 +79,20 @@ def test_typed_and_quoted_key_literals_are_blocked_but_placeholders_are_not(tmp_
         assert name in result.stdout
     for name in ("d.ts", "e.ts"):
         assert name not in result.stdout
+
+
+def test_keyword_prefixed_identifiers_are_not_secrets(tmp_path):
+    (tmp_path / "ok.py").write_text(
+        'TOKEN_URL = "https://auth.example.com/t"\n'
+        'token_type = "Bearer1234"\n'
+        'tokenizer = "bert-base-uncased"\n'
+        'secret_name = "my-secret-name"\n',
+        encoding="utf-8",
+    )
+    (tmp_path / "ok.ts").write_text('const labels = {"passwordLabel": "PasswordInput"}\n', encoding="utf-8")
+    (tmp_path / "bad.ts").write_text('const secretKey = "' + "abcdefgh" + '1234"\n', encoding="utf-8")
+    result = run(tmp_path)
+    assert result.returncode == 2
+    assert "bad.ts" in result.stdout
+    assert "ok.py" not in result.stdout
+    assert "ok.ts" not in result.stdout
