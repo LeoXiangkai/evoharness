@@ -24,7 +24,7 @@ tools: Read, Grep, Glob, Bash, WebSearch
 
 1. 当前项目 `CLAUDE.md` / `AGENTS.md`
 2. 全局入口 `aicj/CLAUDE.global.md`
-3. `00-spec.md`（若存在）
+3. `01-requirements.md`（若存在）
 4. 相关规则与目标模块入口文件
 
 ## 输出要求

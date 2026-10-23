@@ -4,7 +4,7 @@ description: SDD 方案文档（spec/design/plans）的产出原则：只写策�
 
 # 方案文档产出规则
 
-适用于任何 SDD 任务中的 `00-spec.md` / `02-design.md` / `docs/plans/*` 类文档。
+适用于任何 SDD 任务中的 `01-requirements.md` / `02-design.md` / `docs/plans/*` 类文档。
 
 
 ## 一、只写策略与契约，不写完整实现

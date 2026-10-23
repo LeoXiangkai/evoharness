@@ -53,10 +53,10 @@ user-invocable: true
 注意：
 - 使用 Read/Grep 工具读取 CLAUDE.md 了解项目规范
 - 需求冻结的完整标准见 Skill `sdd-pipeline` 门1
-- 输出写入任务文件夹：01-plan.md
+- 输出写入任务文件夹：01-requirements.md
 ```
 
-**等待 PM Agent 返回分析结果，写入 `01-plan.md`。**
+**等待 PM Agent 返回分析结果，写入 `01-requirements.md`。**
 
 > 需求冻结（覆盖矩阵 + EARS 可判定验收条件）是本模块"需求一致性"的基线，
 > 后续 Step 7 验收要回链它。标准见 `sdd-pipeline` 门1。
@@ -159,7 +159,7 @@ worktree：{绝对路径}
 测试依据：
 - 变更日志：任务文件夹/03-code-change.md
 - 被测代码：{Dev 输出的被测代码清单}
-- 需求冻结：任务文件夹/01-plan.md 的覆盖矩阵与验收条件
+- 需求冻结：任务文件夹/01-requirements.md 的覆盖矩阵与验收条件
 
 请：
 1. 按 `refs/design-doc-principles.md §四` 测试归属表落地（unit/contract/integration/e2e/manual），
@@ -215,7 +215,7 @@ worktree：{绝对路径}
 
 | # | 判据 | 证据 |
 |---|------|------|
-| 1 | 需求全覆盖：01-plan 覆盖矩阵无空格，每需求点有实现+测试 | 覆盖矩阵 |
+| 1 | 需求全覆盖：01-requirements 覆盖矩阵无空格，每需求点有实现+测试 | 覆盖矩阵 |
 | 2 | QA 证据齐：04-test 证据链完整，无"看代码推断"的 PASS | 测试报告 |
 | 3 | e2e 已沉淀：核心流程 e2e 脚本已固化并登记资产索引 | 资产索引命中 |
 | 4 | 审查判档完成：主会话 diff 自审 + 独立 reviewer 按 `code-review` skill（若已安装）风险门控判 skip/single/dual，未安装时主会话按 diff 风险自行判定 | 自审结论 + 判档结论 |
@@ -226,7 +226,7 @@ worktree：{绝对路径}
 对已完成的 {模块名} 模块按门4 四项判据进行功能验收（标准见 sdd-pipeline）。
 
 验收依据：
-- 需求冻结：任务文件夹/01-plan.md（覆盖矩阵 + 验收条件）
+- 需求冻结：任务文件夹/01-requirements.md（覆盖矩阵 + 验收条件）
 - 设计方案：任务文件夹/02-design.md
 - 变更日志：任务文件夹/03-code-change.md
 - 测试结果：任务文件夹/04-test.md（QA 证据链）
@@ -267,7 +267,7 @@ worktree：{绝对路径}
 
 ### 任务文档
 - 任务文件夹：`.claude/tasks/<YYYYMMDD>-<任务简述>/`
-- 01-plan.md：需求分析计划
+- 01-requirements.md：需求分析 + 需求冻结
 - 02-design.md：架构设计方案
 - 03-code-change.md：变更日志
 - 04-test.md：测试报告
@@ -327,7 +327,7 @@ worktree：{绝对路径}
 
 ```
 <项目根目录>/.claude/tasks/<YYYYMMDD>-<任务简述>/
-├── 01-plan.md          # PM 需求分析 + 需求冻结（覆盖矩阵 + EARS 验收条件）
+├── 01-requirements.md  # PM 需求分析 + 需求冻结（覆盖矩阵 + EARS 验收条件）
 ├── 02-design.md        # SA 架构设计方案
 ├── 03-code-change.md   # Dev 变更日志（含 DDL 执行回执）
 ├── 04-test.md          # QA 测试报告（含证据链）
