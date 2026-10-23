@@ -10,7 +10,9 @@ from pathlib import Path
 EXTENSIONS = {".java", ".xml", ".sql", ".yml", ".yaml", ".properties"}
 SECRET_EXTENSIONS = {".java", ".kt", ".py", ".ts", ".tsx", ".js", ".jsx", ".vue", ".go"}
 SKIP_DIRS = {".git", ".idea", ".vscode", ".omx", "target", "build", "dist", "node_modules", "__pycache__"}
-SECRET_RE = re.compile(r"(?i)(password|passwd|secret|token|access[_-]?key|private[_-]?key)\s*[:=]\s*['\"]?(?![$<{\[(])[A-Za-z0-9_./+\-=]{8,}")
+SECRET_RE = re.compile(
+    r"""(?i)(?:password|passwd|secret|token|access[_-]?key|private[_-]?key)\w*['"]?(?:(?:[ \t]*:[ \t]*[\w.<>\[\]?]+)?[ \t]*=|[ \t]*:)[ \t]*(?:'(?![$<{\[(])[^'\s]{8,}'|"(?![$<{\[(])[^"\s]{8,}")"""
+)
 DOLLAR_RE = re.compile(r"\$\{[^}]+}")
 WRITE_RE = re.compile(r"(?is)\b(update|delete\s+from)\b(?P<body>.*?)(?:;|$)")
 TX_RE = re.compile(r"@Transactional(?!\s*\([^)]*rollbackFor\s*=)")
@@ -33,7 +35,7 @@ def iter_files(paths):
             continue
         candidates = [path] if path.is_file() else path.rglob("*")
         for item in candidates:
-            if not item.is_file() or item.suffix not in EXTENSIONS or any(part in SKIP_DIRS for part in item.parts):
+            if not item.is_file() or not (item.suffix in EXTENSIONS or item.suffix.lower() in SECRET_EXTENSIONS) or any(part in SKIP_DIRS for part in item.parts):
                 continue
             if item not in seen:
                 seen.add(item)

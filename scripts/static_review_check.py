@@ -28,7 +28,7 @@ SKIP_DIRS = {
 # a directory holding this file contains deliberately bad samples (checker fixtures); skip it
 FIXTURE_MARKER = ".static-review-fixture"
 SECRET_RE = re.compile(
-    r"(?i)(password|passwd|secret|token|access[_-]?key|private[_-]?key)\s*[:=]\s*['\"]?[^'\"\s]{8,}"
+    r"""(?i)(?:password|passwd|secret|token|access[_-]?key|private[_-]?key)\w*['"]?(?:(?:[ \t]*:[ \t]*[\w.<>\[\]?]+)?[ \t]*=|[ \t]*:)[ \t]*(?:'(?![$<{\[(])[^'\s]{8,}'|"(?![$<{\[(])[^"\s]{8,}")"""
 )
 MYBATIS_DOLLAR_RE = re.compile(r"\$\{[^}]+}")
 TRANSACTIONAL_RE = re.compile(r"@Transactional(?!\s*\([^)]*rollbackFor\s*=)")
@@ -47,7 +47,7 @@ def is_fixture(path: Path) -> bool:
 
 
 def iter_files(paths: list[str], include_docs: bool):
-    exts = set(DEFAULT_EXTS)
+    exts = DEFAULT_EXTS | SECRET_EXTS
     if include_docs:
         exts.add(".md")
     for raw in paths:
@@ -55,7 +55,7 @@ def iter_files(paths: list[str], include_docs: bool):
         if not path.exists():
             continue
         if path.is_file():
-            if path.suffix in exts and not is_fixture(path):
+            if (path.suffix in exts or path.suffix.lower() in SECRET_EXTS) and not is_fixture(path):
                 yield path
             continue
         for item in path.rglob("*"):
@@ -63,7 +63,7 @@ def iter_files(paths: list[str], include_docs: bool):
                 continue
             if any(part in SKIP_DIRS for part in item.parts) or is_fixture(item):
                 continue
-            if item.suffix in exts:
+            if item.suffix in exts or item.suffix.lower() in SECRET_EXTS:
                 yield item
 
 

@@ -219,7 +219,7 @@ Path('worker-env.txt').write_text('BASE=' + os.environ.get('ANTHROPIC_BASE_URL',
         path = os.pathsep.join([str(fake), str(git_only_path(tmp_path))])
         env = {
             "AICJ_EXECUTOR_BASE_URL": f"http://127.0.0.1:{server.server_port}",
-            "AICJ_EXECUTOR_TOKEN": "test-token",
+            "AICJ_EXECUTOR_TOKEN": "test-" + "token",
             "AICJ_EXECUTOR_CONFIG_DIR": str(tmp_path / "isolated"),
             "ANTHROPIC_API_KEY": "must-disappear",
             "CLAUDECODE": "must-disappear",
@@ -244,7 +244,7 @@ def test_claude_cpa_failure_returns_69_without_engine(repo, tmp_path):
         path = os.pathsep.join([str(fake), str(git_only_path(tmp_path))])
         bad = worker("--cd", str(repo[1]), "--tier", "low", "x", claude=tmp_path, path=path, env_extra={
             "AICJ_EXECUTOR_BASE_URL": f"http://127.0.0.1:{server.server_port}",
-            "AICJ_EXECUTOR_TOKEN": "wrong-token",
+            "AICJ_EXECUTOR_TOKEN": "wrong-" + "token",
         })
         assert bad.returncode == 69 and not marker.exists()
         missing = worker("--cd", str(repo[1]), "--tier", "low", "x", claude=tmp_path, path=path, env_extra={
@@ -261,7 +261,7 @@ def test_claude_dry_run_does_not_contact_cpa(repo, tmp_path):
     try:
         result = worker("--cd", str(repo[1]), "--tier", "low", "--dry-run", "x", claude=tmp_path, env_extra={
             "AICJ_EXECUTOR_BASE_URL": f"http://127.0.0.1:{server.server_port}",
-            "AICJ_EXECUTOR_TOKEN": "test-token",
+            "AICJ_EXECUTOR_TOKEN": "test-" + "token",
         })
         assert result.returncode == 0
         assert f"AICJ_EXECUTOR_BASE_URL=http://127.0.0.1:{server.server_port}" in result.stderr

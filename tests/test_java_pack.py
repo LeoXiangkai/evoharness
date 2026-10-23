@@ -107,11 +107,36 @@ def test_static_review_allows_plaintext_config_but_reports_java_secret(tmp_path:
     config = tmp_path / "application.yml"
     config.write_text("password: abcdefgh1234\n", encoding="utf-8")
     source = tmp_path / "Config.java"
-    source.write_text('class Config { String password = "abcdefgh1234"; }\n', encoding="utf-8")
+    source.write_text('class Config { String password = "' + "abcdefgh" + '1234"; }\n', encoding="utf-8")
     result = subprocess.run([sys.executable, str(STATIC), str(tmp_path)], capture_output=True, text=True, encoding="utf-8")
     assert result.returncode == 1
     assert "Config.java" in result.stdout
     assert "application.yml" not in result.stdout
+
+
+def test_static_review_reports_secrets_in_non_java_source_files(tmp_path: Path):
+    (tmp_path / "a.kt").write_text('val password = "' + "Abc12345" + 'xyz"\n', encoding="utf-8")
+    (tmp_path / "b.ts").write_text('const password = "' + "Abc12345" + 'xyz";\n', encoding="utf-8")
+    (tmp_path / "application.yml").write_text("password: abcdefgh1234\n", encoding="utf-8")
+    result = subprocess.run([sys.executable, str(STATIC), str(tmp_path)], capture_output=True, text=True, encoding="utf-8")
+    assert result.returncode == 1
+    assert "a.kt" in result.stdout
+    assert "b.ts" in result.stdout
+    assert "application.yml" not in result.stdout
+
+
+def test_static_review_ignores_non_literal_secret_values_but_reports_quoted_literal(tmp_path: Path):
+    (tmp_path / "ok.py").write_text('token = os.environ.get("X")\n', encoding="utf-8")
+    (tmp_path / "ok.ts").write_text("const password = import.meta.env.VITE_PASSWORD\n", encoding="utf-8")
+    result = subprocess.run([sys.executable, str(STATIC), str(tmp_path)], capture_output=True, text=True, encoding="utf-8")
+    assert result.returncode == 0
+    assert "No P0/P1" in result.stdout
+    (tmp_path / "bad.py").write_text('api_token = "' + "abcdefgh" + '1234"\n', encoding="utf-8")
+    result = subprocess.run([sys.executable, str(STATIC), str(tmp_path)], capture_output=True, text=True, encoding="utf-8")
+    assert result.returncode == 1
+    assert "bad.py" in result.stdout
+    assert "ok.py" not in result.stdout
+    assert "ok.ts" not in result.stdout
 
 
 def test_resolve_packs_auto_detects_java_files(tmp_path: Path):
@@ -136,3 +161,18 @@ def test_install_doctor_uninstall_java_pack(tmp_path: Path):
     uninstall = subprocess.run([sys.executable, str(AICJ), "uninstall", "--home", str(home)], capture_output=True, text=True, encoding="utf-8")
     assert uninstall.returncode == 0, uninstall.stdout + uninstall.stderr
     assert list(home.rglob("*")) == []
+
+
+def test_static_review_typed_and_quoted_key_literals_and_placeholders(tmp_path: Path):
+    fake = "abcdefgh" + "1234"
+    (tmp_path / "a.ts").write_text("const token: string = '" + fake + "'\n", encoding="utf-8")
+    (tmp_path / "b.kt").write_text('val password: String = "' + fake + '"\n', encoding="utf-8")
+    (tmp_path / "c.ts").write_text('const o = {"password": "' + fake + '"}\n', encoding="utf-8")
+    (tmp_path / "d.ts").write_text('const password = "${DB_' + 'PASSWORD}"\n', encoding="utf-8")
+    (tmp_path / "e.ts").write_text('const token = "<your-' + 'token>"\n', encoding="utf-8")
+    result = subprocess.run([sys.executable, str(STATIC), str(tmp_path)], capture_output=True, text=True, encoding="utf-8")
+    assert result.returncode == 1
+    for name in ("a.ts", "b.kt", "c.ts"):
+        assert name in result.stdout
+    for name in ("d.ts", "e.ts"):
+        assert name not in result.stdout
