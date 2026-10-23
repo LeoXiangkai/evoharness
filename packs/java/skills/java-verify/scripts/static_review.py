@@ -11,7 +11,7 @@ EXTENSIONS = {".java", ".xml", ".sql", ".yml", ".yaml", ".properties"}
 SECRET_EXTENSIONS = {".java", ".kt", ".py", ".ts", ".tsx", ".js", ".jsx", ".vue", ".go"}
 SKIP_DIRS = {".git", ".idea", ".vscode", ".omx", "target", "build", "dist", "node_modules", "__pycache__"}
 SECRET_RE = re.compile(
-    r"""(?i)(?:password|passwd|secret|token|access[_-]?key|private[_-]?key)\w*['"]?(?:(?:[ \t]*:[ \t]*[\w.<>\[\]?]+)?[ \t]*=|[ \t]*:)[ \t]*(?:'(?![$<{\[(])[^'\s]{8,}'|"(?![$<{\[(])[^"\s]{8,}")"""
+    r"""(?i)(?:password|passwd|secret|token|access[_-]?key|private[_-]?key)(?:[_-]?(?:key|value|str|string))?\b['"]?(?:(?:[ \t]*:[ \t]*[\w.<>\[\]?]+)?[ \t]*=|[ \t]*:)[ \t]*(?:'(?![$<{\[(])[^'\s]{8,}'|"(?![$<{\[(])[^"\s]{8,}")"""
 )
 DOLLAR_RE = re.compile(r"\$\{[^}]+}")
 WRITE_RE = re.compile(r"(?is)\b(update|delete\s+from)\b(?P<body>.*?)(?:;|$)")
