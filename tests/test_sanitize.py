@@ -92,7 +92,7 @@ def test_new_patterns_each_hit_their_own_rule(tmp_path: Path) -> None:
     cases = {
         "secret-key-sk": ["key sk-ant-api03-AbCdEfGhIjKlMnOpQrStUvWx\n", "key sk-proj-AbCdEfGhIjKlMnOpQrSt_UvWx\n"],
         "secret-token-assign": [
-            'export GITEE_TOKEN: "abcdefghijk"\n',
+            'export GITEE_TOKEN: "' + "abcdefgh" + 'ijk"\n',
             "CLIENT_SECRET=abcdefgh1234\n",
             "DB_PASSWORD=hunter2hunter2\n",
             '{"OPENAI_API_KEY": "abcdefghijkl"}\n',

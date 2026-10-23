@@ -126,7 +126,7 @@ def test_static_review_allows_plaintext_config_but_reports_python_secret(tmp_pat
     config = tmp_path / "application.yml"
     config.write_text("password: abcdefgh1234\n", encoding="utf-8")
     source = tmp_path / "settings.py"
-    source.write_text('password = "abcdefgh1234"\n', encoding="utf-8")
+    source.write_text('password = "' + "abcdefgh" + '1234"\n', encoding="utf-8")
     result = subprocess.run([sys.executable, str(STATIC), str(tmp_path)], capture_output=True, text=True, encoding="utf-8")
     assert result.returncode == 1
     assert "settings.py" in result.stdout
