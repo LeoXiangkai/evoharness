@@ -23,7 +23,7 @@ tools: Read, Write, Edit, Grep, Glob, Bash
 
 1. 当前项目 `CLAUDE.md` / `AGENTS.md`
 2. 全局入口 `aicj/CLAUDE.global.md`
-3. `03-code-change.md`、`00-spec.md`、`02-design.md`（按需）
+3. `03-code-change.md`、`01-requirements.md`、`02-design.md`（按需）
 4. 相关测试目录和被测代码
 
 ## 与测试环境验证的边界

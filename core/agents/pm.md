@@ -26,7 +26,7 @@ tools: Read, Grep, Glob, WebSearch
 
 1. 当前项目 `CLAUDE.md` / `AGENTS.md`
 2. 全局入口 `aicj/CLAUDE.global.md`
-3. 相关任务产物：`00-spec.md` / `02-design.md` / `04-test.md`
+3. 相关任务产物：`01-requirements.md` / `02-design.md` / `04-test.md`
 4. 必要时再看项目档案中的参考资料
 
 ## 输出要求
@@ -34,7 +34,7 @@ tools: Read, Grep, Glob, WebSearch
 - 给出一句话需求理解
 - 明确流程类型和判定依据
 - 列清楚下一步由谁做、做什么、完成标准是什么
-- SDD 完整流程时，产出 `00-spec.md` 或 `05-acceptance.md`
+- SDD 完整流程时，产出 `01-requirements.md` 或 `05-acceptance.md`
 
 ## 交接原则
 
