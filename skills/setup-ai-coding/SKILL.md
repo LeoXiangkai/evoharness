@@ -58,8 +58,13 @@ user-invocable: true
   想脱离版本控制只能 `git rm --cached`，而那在共享仓库里是破坏性操作。
 - 已验证 Claude Code 会自动加载它（哨兵实测，验证方法见第五阶段第 9 条）。
 
-**唯一例外**：用户**显式要求**产出一份入库、供团队共用的 `CLAUDE.md`。此时才创建或修改它，
-且必须先确认仓库归属（第零阶段）并征得同意。除此之外：
+**例外一**：用户**显式要求**产出一份入库、供团队共用的 `CLAUDE.md`。此时才创建或修改它，
+且必须先确认仓库归属（第零阶段）并征得同意。
+
+**例外二（单人模式）**：项目 README「交付约定」的「开发模式」行写明「单人」时，入口改为本机 `CLAUDE.md`，
+已跟踪的旧 `CLAUDE.md` 从 git 移除而非并存，做法见第零阶段「单人模式分支」。
+
+除这两种例外之外（即多人模式）：
 
 - ❌ 不创建 `CLAUDE.md`
 - ❌ 不修改已存在的 `CLAUDE.md`（哪怕只加一行 `@AGENTS.md`）
@@ -69,7 +74,7 @@ user-invocable: true
 
 ## 第零阶段：判仓库归属（决定排除机制与红线强度）
 
-> 入口文件**不再由这一步决定**——按上面的铁律恒为 `CLAUDE.local.md`。
+> 入口文件**不再由这一步决定**——按上面的铁律，多人模式恒为 `CLAUDE.local.md`，单人模式为本机 `CLAUDE.md`。
 > 这一步现在只回答两件事：**排除规则写哪里**、**红线要多严**。
 
 **这一步不能跳。** 写任何文件前先判：
@@ -90,7 +95,7 @@ git log --format='%an' -- CLAUDE.md | sort -u   # 谁写的
 | **B. 团队共享仓，`CLAUDE.md` 未跟踪** | 多贡献者，但无 tracked `CLAUDE.md` | **`.git/info/exclude`**，不碰 `.gitignore` | 常规 |
 | **C. 团队共享仓，`CLAUDE.md` 已被他人跟踪** | 多贡献者 + `CLAUDE.md` tracked 且作者不是自己 | **`.git/info/exclude`**，不碰 `.gitignore` | **最严**，见下 |
 
-### 通用红线（三种情况都适用）
+### 通用红线（三种情况都适用；仅多人模式，单人模式见下一节）
 
 - ❌ **绝不** `git rm --cached CLAUDE.md` —— 共享仓库里那是把同事的文件删掉，他们 pull 后会消失。
 - ❌ **绝不**把个人内容写进已存在的 `CLAUDE.md`，包括看似无害的 `@AGENTS.md` 一行引用。
@@ -102,6 +107,24 @@ git log --format='%an' -- CLAUDE.md | sort -u   # 谁写的
   `git status --short` 与 `git diff --stat HEAD` 收工时都必须为空。
 - 不新增任何会出现在 `git status` 里的未跟踪文件/目录（含 `scripts/` 这类新顶层目录）；
   确有需要则放进已排除的 `.omx/` 下。
+
+### 单人模式分支（开发模式 = 单人）
+
+**判据**：项目 README「交付约定」的「开发模式」行写明「单人」；未声明按多人处理，不得自行推断为单人。
+
+此时 A / B / C 不再决定入口文件：入口恒为**本机 `CLAUDE.md`**，不入库、不另建 `CLAUDE.local.md`，
+仓库里不保留任何 AI 工具入口文件。上面的通用红线（不 `git rm --cached`、不改已有 `CLAUDE.md`）在此模式下不适用。
+
+1. **已跟踪的 `CLAUDE.md`**（含他人遗留）：按全局 worktree 规则在临时 worktree 内 `git rm CLAUDE.md` 并提交
+   （Conventional Commits，不带任务编号），`--no-ff` 合入基线并推送基线；单人模式推基线无需再问。
+   删除前记下该文件的最后提交 hash 与作者，写进输出。
+2. **新内容不迁移旧文本**：旧文件常含他人开发机的路径 / host 与过期描述。项目事实按第一阶段重新探测，
+   只写实跑验证过的命令；确需保留旧说明时，在新文件头写一行 `git show <旧提交>:CLAUDE.md` 指针即可。
+3. **先排除、再写文件**：`.git/info/exclude` 追加 `CLAUDE.md`，然后写本机 `CLAUDE.md`；顺序反了文件会短暂出现在 `git status`。
+4. 其余产物（`AGENTS.md`、`.omx/`、`.ai-coding-java` 等）照常按排除清单处理；它们若也已被他人跟踪，
+   同样先从 git 移除再排除，并逐个在输出里列出文件名、原作者、最后提交。
+5. **验证**：`git ls-files CLAUDE.md` 为空；`git check-ignore CLAUDE.md` 命中；`git status --short` 为空；
+   `git rev-list --left-right --count origin/<基线>...HEAD` 为 `0 0`。
 
 ---
 
@@ -135,8 +158,8 @@ git log --format='%an' -- CLAUDE.md | sort -u   # 谁写的
 | 文件 | 用途 | 默认动作 |
 |---|---|---|
 | `AGENTS.md` | Codex 项目契约 | `omx agents-init` 生成，或无 OMX 时手写兜底 |
-| **`CLAUDE.local.md`** | **Claude Code 入口（默认，恒用这个）** | 创建或合并，本地排除 |
-| `CLAUDE.md` | 团队共享的项目契约 | **默认不碰**；仅用户显式要求入库共享时才创建/修改 |
+| **`CLAUDE.local.md`** | **Claude Code 入口（多人模式默认，恒用这个）** | 创建或合并，本地排除 |
+| `CLAUDE.md` | 团队共享的项目契约 | 多人模式**默认不碰**，仅用户显式要求入库共享时才创建/修改；**单人模式下是本机入口**（不入库），见「单人模式分支」 |
 | `.omx/project-memory.json` | 结构化长期记忆 | 缺失则按 schema 创建 |
 | `.omx/notepad.md` | 当前任务记忆 | 缺失则创建 |
 | `.claude/settings.local.json` | 敏感文件读取阻断 | 按需创建 |
@@ -162,9 +185,9 @@ git log --format='%an' -- CLAUDE.md | sort -u   # 谁写的
   注入锚点，**不要手工删改**。
 - 旧项目若还在用 `/deep-interview` 老触发语法，对齐到 `$` 新语法。
 
-### 2. Claude Code 入口 → `CLAUDE.local.md`（恒定，无分支）
+### 2. Claude Code 入口 → `CLAUDE.local.md`（多人模式恒定；单人模式见「单人模式分支」）
 
-**不管仓库归属是 A / B / C，也不管 `CLAUDE.md` 是否存在，都写 `CLAUDE.local.md`。**
+**多人模式下，不管仓库归属是 A / B / C，也不管 `CLAUDE.md` 是否存在，都写 `CLAUDE.local.md`；单人模式写本机 `CLAUDE.md`（内容要求相同，冲突裁决顺序里去掉“项目 CLAUDE.md”一档）。**
 
 已有 `CLAUDE.md` 时**不引用、不修改它**——两个文件会被同时加载，重复引用只会浪费上下文。
 开头写清冲突裁决顺序，让两者关系明确：
@@ -286,7 +309,8 @@ CLAUDE.local.md
 
 用户明确表示不希望入库时，再按需追加 `AGENTS.md` / `.claude/` / `.ai-coding-java`（不带尾斜杠）条目。
 
-> **注意清单里没有 `CLAUDE.md`**：本 skill 默认不产出它，所以也没有理由去 ignore 它。
+> **多人模式的清单里没有 `CLAUDE.md`**：本 skill 默认不产出它，所以也没有理由去 ignore 它。
+> 单人模式的清单多一行 `CLAUDE.md`，且必须先把已跟踪的 `CLAUDE.md` 从 git 移除再追加排除，否则排除无效。
 > 若项目已有 tracked 的 `CLAUDE.md`，把它加进 ignore 也不会生效（gitignore 对已跟踪文件无效）。
 
 运行时状态无论哪种情况都该排除：`.omx/logs/`、`.omx/state/`、`.omx/metrics.json`、`*.log`、
@@ -376,7 +400,7 @@ python3 <ai-coding-java-root>/scripts/init_target_project.py <project-root> \
 1. `project-type`：已有业务源码或提交历史用 `legacy`；空项目用 `new`；无法判断用 `unconfirmed`。
 2. `stack`：从已检测的构建文件、依赖文件、README、配置文件中提取；无法确认写 `unconfirmed`。
 3. `data-boundary`：除非项目规则已明确租户/组织/学校/年度等边界，否则写 `unconfirmed`。
-4. `--claude-entry local` 是 `$setup-ai-coding` 的固定选择，避免默认修改团队 `CLAUDE.md`。
+4. 多人模式固定 `--claude-entry local`，避免默认修改团队 `CLAUDE.md`；单人模式用 `--claude-entry team`——此时 `CLAUDE.md` 已移出 git 并被排除，标记块写进它不会入库。
 5. 不加 `--force`，除非用户明确要求覆盖 `.ai-coding-java/`。
 6. `--hooks skip` 是 `$setup-ai-coding` 的固定选择：钩子安装改为下面"git 钩子"小节里的显式征求同意步骤，不在初始化命令里静默装上。
 7. `--build-cmd` / `--test-cmd` / `--start-cmd` 只填第一阶段**已实跑验证**的命令；没有验证过的参数留空，不要编造。
@@ -436,7 +460,7 @@ done
 |--------|------|------|----------------|
 | **CC 自动记忆**（权威层） | `~/.claude/projects/<encoded-cwd>/memory/*.md` + `MEMORY.md` | CC 自动维护 | ✅ 每会话 |
 | **本机项目入口** | `./CLAUDE.local.md` | 本 skill（默认产物） | ✅ 每会话（已哨兵实测） |
-| **团队项目契约** | `./CLAUDE.md` | 项目团队，本 skill 默认不碰 | ✅ 每会话（若存在） |
+| **团队项目契约** | `./CLAUDE.md` | 项目团队，多人模式下本 skill 默认不碰；单人模式下此文件即本机入口 | ✅ 每会话（若存在） |
 | **OMX/Codex 记忆** | `./.omx/`（`project-memory.json` / `notepad.md` / `state/`） | omx 或手工 | ❌ Codex 侧读 |
 | **项目内人读摘要**（可选） | `./.claude/memory/MEMORY.md` | 手工 | ❌ **CC 不自动读** |
 
@@ -454,7 +478,7 @@ done
 2. **`git status --short` 与 `git diff --stat HEAD`**——情况 C 下两者都必须为空（零 tracked 改动）。
 3. **`git check-ignore <每个产物>`** 逐个确认真被排除，不是"以为排除了"（含 `git check-ignore
    .ai-coding-java` 当该目录被排除时）。
-4. **反向确认**团队文件仍 `git ls-files --error-unmatch CLAUDE.md .gitignore` 通过。
+4. **反向确认**团队文件仍被跟踪：`git ls-files --error-unmatch CLAUDE.md .gitignore` 通过（单人模式下 `CLAUDE.md` 已移出版本控制，只核对 `.gitignore`）。
 5. JSON 合法性：`python3 -c "import json;json.load(open('.omx/project-memory.json'))"`，
    `.claude/settings.local.json` 同理。
 6. 实跑一次 build 命令（如 `mvn -q compile -DskipTests`），确认写进文档的命令真的能跑。
@@ -462,7 +486,7 @@ done
    `python3 .ai-coding-java/scripts/check_target_project.py .`；未命中支持语言或组件源仓库要写明跳过原因。
 8. 确认**未生成** `.claudeignore`、未意外生成 `.codex/`。
 9. 排除规则没有误伤源码。
-10. **确认 `CLAUDE.md` 未被创建也未被修改**（除非用户显式要求）：
+10. **多人模式：确认 `CLAUDE.md` 未被创建也未被修改**（除非用户显式要求；单人模式见第 14 条）：
 
    ```bash
    git diff --stat HEAD -- CLAUDE.md     # 必须为空
@@ -490,6 +514,9 @@ done
 13. **基线与登记**：`grep -n "当前基线分支" CLAUDE.local.md` 命中一行；`.worktrees/REGISTRY.md` 存在且
     `git check-ignore .worktrees/REGISTRY.md` 通过。
 
+14. **单人模式**：执行「单人模式分支」第 5 条的四项检查，并 `grep -n "当前基线分支" CLAUDE.md` 命中一行
+    （第 13 条里的 `CLAUDE.local.md` 在此模式下换成 `CLAUDE.md`）。
+
 ---
 
 ## 无 OMX 兜底
@@ -504,6 +531,7 @@ done
 
 - 初始化 / 补齐的文件清单，以及**明确未动的文件**（`CLAUDE.md` 若存在，必须显式声明"未修改"）。
 - 判定的仓库归属（A / B / C）与据此选择的排除机制。
+- 开发模式（单人 / 多人）及依据；单人模式下被移出 git 的文件清单（文件名、原作者、最后提交 hash）。
 - Codex 与 Claude Code 的入口行为摘要；Claude Code 入口应为 `CLAUDE.local.md`，
   若本次动了 `CLAUDE.md`，必须写明是用户哪一句显式要求的。
 - Java/Python/Vue 项目的 `.ai-coding-java/` 接入结果；未命中支持语言或组件源仓库必须写明跳过原因。
