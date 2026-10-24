@@ -61,8 +61,8 @@ user-invocable: true
 **例外一**：用户**显式要求**产出一份入库、供团队共用的 `CLAUDE.md`。此时才创建或修改它，
 且必须先确认仓库归属（第零阶段）并征得同意。
 
-**例外二（单人模式）**：项目 README「交付约定」的「开发模式」行写明「单人」时，入口改为本机 `CLAUDE.md`，
-已跟踪的旧 `CLAUDE.md` 从 git 移除而非并存，做法见第零阶段「单人模式分支」。
+**例外二（单人模式）**：项目声明开发模式为「单人」时（判据与查找位置见第零阶段「单人模式分支」），入口改为本机 `CLAUDE.md`，
+已跟踪的旧 `CLAUDE.md` 从 git 移除而非并存。
 
 除这两种例外之外（即多人模式）：
 
@@ -87,7 +87,7 @@ git ls-files --error-unmatch CLAUDE.md     # CLAUDE.md 是否已被跟踪
 git log --format='%an' -- CLAUDE.md | sort -u   # 谁写的
 ```
 
-分三种情况。**入口文件三种情况都是 `CLAUDE.local.md`**，区别只在排除机制：
+分三种情况。**多人模式下入口文件三种情况都是 `CLAUDE.local.md`**（单人模式见下一节），区别只在排除机制：
 
 | 情况 | 判据 | 排除机制 | 红线 |
 |------|------|---------|------|
@@ -110,7 +110,8 @@ git log --format='%an' -- CLAUDE.md | sort -u   # 谁写的
 
 ### 单人模式分支（开发模式 = 单人）
 
-**判据**：项目 README「交付约定」的「开发模式」行写明「单人」；未声明按多人处理，不得自行推断为单人。
+**判据**：「交付约定」里的「开发模式」行写明「单人」。先看本仓库 README；没有就沿目录向上，找列出本仓库的系统 README
+（本项目即 `school-visit-system/README.md`）。找不到、或写法不是「单人」，一律按多人处理，不得自行推断为单人。
 
 此时 A / B / C 不再决定入口文件：入口恒为**本机 `CLAUDE.md`**，不入库、不另建 `CLAUDE.local.md`，
 仓库里不保留任何 AI 工具入口文件。上面的通用红线（不 `git rm --cached`、不改已有 `CLAUDE.md`）在此模式下不适用。
@@ -209,7 +210,7 @@ git log --format='%an' -- CLAUDE.md | sort -u   # 谁写的
 （或 `Not-tested: db-cli 未接入`）、能力路由、本仓特有的坑、记忆分层。
 不写的：项目通用规范（属于 `CLAUDE.md` 或 `AGENTS.md`）、全局 skill 目录、model 表。
 
-#### `@AGENTS.md` 全量导入的判断门槛（写在 `CLAUDE.local.md` 里，不写进 `CLAUDE.md`）
+#### `@AGENTS.md` 全量导入的判断门槛（写在本机入口文件里——多人模式是 `CLAUDE.local.md`，单人模式是本机 `CLAUDE.md`；不写进入库的 `CLAUDE.md`）
 
 `omx agents-init` 生成的**根 AGENTS.md 常达 20KB+**，主体是 OMX 多智能体编排协议（model 表 /
 team-worker 协议 / lore commit protocol）——对 CC 是纯噪音，全量导入会让每次会话白吃约 6k token。
@@ -224,7 +225,7 @@ team-worker 协议 / lore commit protocol）——对 CC 是纯噪音，全量�
 
 全局 git 规则要求基线分支名由项目声明，而非写进规则或记忆。推断候选：
 `git symbolic-ref --short refs/remotes/origin/HEAD`，无远程时取当前分支；**向用户确认一次**后，
-在 `CLAUDE.local.md` 与 AGENTS.md 的 `OMX:AGENTS-INIT:MANUAL` 块各写一行：
+在本机入口文件（`CLAUDE.local.md`；单人模式为 `CLAUDE.md`）与 AGENTS.md 的 `OMX:AGENTS-INIT:MANUAL` 块各写一行：
 
 ```markdown
 当前基线分支：<branch>
@@ -447,6 +448,7 @@ done
 
 - `.git/info/exclude` 在 common dir（`.git/`）里，对所有 worktree 生效，软链本身不会出现在
   `git status` 里。
+- 单人模式下入口文件是 `CLAUDE.md`，把上面循环里的 `CLAUDE.local.md` 换成 `CLAUDE.md`。
 - `.omx/notepad.md` 因此是**跨 worktree 共享**的；需要按 worktree 隔离当前任务记忆时，只软链
   `.omx/project-memory.json`，`notepad.md` 单独在各 worktree 内建各自的文件。
 
@@ -459,7 +461,7 @@ done
 | 记忆层 | 位置 | 谁管 | CC 是否自动加载 |
 |--------|------|------|----------------|
 | **CC 自动记忆**（权威层） | `~/.claude/projects/<encoded-cwd>/memory/*.md` + `MEMORY.md` | CC 自动维护 | ✅ 每会话 |
-| **本机项目入口** | `./CLAUDE.local.md` | 本 skill（默认产物） | ✅ 每会话（已哨兵实测） |
+| **本机项目入口** | `./CLAUDE.local.md`（单人模式为 `./CLAUDE.md`） | 本 skill（默认产物） | ✅ 每会话（已哨兵实测） |
 | **团队项目契约** | `./CLAUDE.md` | 项目团队，多人模式下本 skill 默认不碰；单人模式下此文件即本机入口 | ✅ 每会话（若存在） |
 | **OMX/Codex 记忆** | `./.omx/`（`project-memory.json` / `notepad.md` / `state/`） | omx 或手工 | ❌ Codex 侧读 |
 | **项目内人读摘要**（可选） | `./.claude/memory/MEMORY.md` | 手工 | ❌ **CC 不自动读** |
@@ -493,7 +495,8 @@ done
    git log --oneline -1 -- CLAUDE.md     # 最后一次提交应仍是他人/历史提交
    ```
 
-11. **确认 `CLAUDE.local.md` 真的被加载**（哨兵法，唯一可靠手段）：
+11. **确认本机入口文件（`CLAUDE.local.md`；单人模式为 `CLAUDE.md`）真的被加载**（哨兵法，唯一可靠手段；
+    单人模式把下面命令里的文件名换成 `CLAUDE.md`，它已被排除，哨兵同样用完即删）：
 
     ```bash
     C="SETUP-CANARY-$RANDOM$RANDOM"
@@ -532,8 +535,8 @@ done
 - 初始化 / 补齐的文件清单，以及**明确未动的文件**（`CLAUDE.md` 若存在，必须显式声明"未修改"）。
 - 判定的仓库归属（A / B / C）与据此选择的排除机制。
 - 开发模式（单人 / 多人）及依据；单人模式下被移出 git 的文件清单（文件名、原作者、最后提交 hash）。
-- Codex 与 Claude Code 的入口行为摘要；Claude Code 入口应为 `CLAUDE.local.md`，
-  若本次动了 `CLAUDE.md`，必须写明是用户哪一句显式要求的。
+- Codex 与 Claude Code 的入口行为摘要；Claude Code 入口应为 `CLAUDE.local.md`（单人模式为本机 `CLAUDE.md`），
+  多人模式下若本次动了 `CLAUDE.md`，必须写明是用户哪一句显式要求的。
 - Java/Python/Vue 项目的 `.ai-coding-java/` 接入结果；未命中支持语言或组件源仓库必须写明跳过原因。
 - Git 钩子是否安装及理由（`--hooks skip` 默认跳过 / `core.hooksPath` 阻断跳过 / 用户同意后已安装）。
 - worktree 适配方式：是否需要软链、已软链的文件清单。
