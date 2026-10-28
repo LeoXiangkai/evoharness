@@ -148,8 +148,10 @@ function Install-CcLauncher {
 
 try {
     if (-not $RepoDir) {
-        if ($PSScriptRoot) {
-            $RepoDir = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
+        $scriptRepo = if ($PSScriptRoot) { Split-Path (Split-Path $PSScriptRoot -Parent) -Parent }
+        # A standalone downloaded copy has no repository two levels up; clone into the default location instead.
+        if ($scriptRepo -and (Test-Path (Join-Path $scriptRepo "installer\aicj.py"))) {
+            $RepoDir = $scriptRepo
         } else {
             $RepoDir = Join-Path $HOME "src\evoharness"
         }
