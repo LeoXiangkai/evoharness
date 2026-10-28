@@ -594,6 +594,12 @@ def _merge_hook_file(
     return entry
 
 
+def _emit_failure(home: Path, source: Path | None, command: str, exc: BaseException,
+                  dry_run: bool, options=None) -> None:
+    if not dry_run:
+        telemetry.emit_install(home, source, command, False, error_kind=type(exc).__name__, options=options)
+
+
 def run_install(
     home: Path,
     source: Path,
@@ -603,9 +609,14 @@ def run_install(
     try:
         return _run_install(home, source, options, dry_run)
     except UnicodeError as exc:
+        _emit_failure(home, source, "install", exc, dry_run, options)
         raise UserError(f"install aborted: undecodable text: {exc}") from exc
     except OSError as exc:
+        _emit_failure(home, source, "install", exc, dry_run, options)
         raise UserError(f"install aborted: {exc}; rerun after fixing it (progress is recorded, uninstall still works)") from exc
+    except Exception as exc:
+        _emit_failure(home, source, "install", exc, dry_run, options)
+        raise
 
 
 def _run_install(
@@ -944,9 +955,14 @@ def run_uninstall(home: Path, dry_run: bool) -> Report:
     try:
         return _run_uninstall(home, dry_run)
     except UnicodeError as exc:
+        _emit_failure(home, None, "uninstall", exc, dry_run)
         raise UserError(f"uninstall aborted: undecodable text: {exc}") from exc
     except OSError as exc:
+        _emit_failure(home, None, "uninstall", exc, dry_run)
         raise UserError(f"uninstall aborted: {exc}") from exc
+    except Exception as exc:
+        _emit_failure(home, None, "uninstall", exc, dry_run)
+        raise
 
 
 def _run_uninstall(home: Path, dry_run: bool) -> Report:
@@ -955,9 +971,6 @@ def _run_uninstall(home: Path, dry_run: bool) -> Report:
     if loaded is None:
         report.note("no manifest; nothing installed")
         return report
-
-    if not dry_run:
-        telemetry.uninstall_report(home, None)
 
     hud.uninstall(home, loaded.hud, report, dry_run=dry_run)
 
@@ -979,6 +992,9 @@ def _run_uninstall(home: Path, dry_run: bool) -> Report:
     for target in hook_keys:
         if (home / target).exists():
             settings.load(home / target)
+
+    if not dry_run:
+        telemetry.uninstall_report(home, None)  # after validation, before the library and team.json are removed
 
     gone: set[Path] = set()
     kept_dirs: set[Path] = set()

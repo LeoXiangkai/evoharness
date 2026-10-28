@@ -4,7 +4,8 @@
 Usage: telemetry_aggregate.py --repo <collect repo clone> [--since YYYY-MM-DD] [--format md|json]
 
 Reads <date>/<user>-<install>.jsonl, re-validates every row with the library's
-sanitize, drops duplicate event_ids and prints summary counts only (no raw events).
+sanitize, drops duplicate event_ids across all files and prints summary counts only
+(no raw events).
 Users appear only as their hash.
 """
 from __future__ import annotations
@@ -71,6 +72,42 @@ def grouped(events: list[dict], key) -> dict[str, dict]:
     return rows
 
 
+def _int(value) -> int:
+    return value if isinstance(value, int) and not isinstance(value, bool) else 0
+
+
+def by_task(events: list[dict]) -> dict[str, dict]:
+    """Per task hash: test run count and 1-based index of the first green run (ts order)."""
+    runs: dict[str, list[dict]] = defaultdict(list)
+    for ev in events:
+        if ev["type"] == "test_run" and ev.get("task"):
+            runs[ev["task"]].append(ev)
+    out = {}
+    for task in sorted(runs):
+        ordered = sorted(runs[task], key=lambda e: (e["ts"], e["event_id"]))
+        first = next((i for i, e in enumerate(ordered, 1) if e.get("green")), None)
+        out[task] = {"test_runs": len(ordered), "first_green_index": first}
+    return out
+
+
+def by_lesson_card(events: list[dict]) -> dict[str, dict]:
+    """Per card: recall count and corrections in the same task after the card's first recall (best-effort)."""
+    recalls: dict[str, list[dict]] = defaultdict(list)
+    for ev in events:
+        if ev["type"] == "lesson_recall" and ev.get("card"):
+            recalls[ev["card"]].append(ev)
+    corrections = [ev for ev in events if ev["type"] == "correction" and ev.get("task")]
+    out = {}
+    for card in sorted(recalls):
+        first: dict[str, str] = {}
+        for ev in recalls[card]:
+            if ev.get("task") and (ev["task"] not in first or ev["ts"] < first[ev["task"]]):
+                first[ev["task"]] = ev["ts"]
+        after = sum(1 for c in corrections if c["task"] in first and c["ts"] > first[c["task"]])
+        out[card] = {"recalls": len(recalls[card]), "corrections_after_recall": after}
+    return out
+
+
 def detail(events: list[dict]) -> dict[str, int]:
     c = Counter()
     for ev in events:
@@ -79,16 +116,21 @@ def detail(events: list[dict]) -> dict[str, int]:
             c["install_ok" if ev.get("ok") else "install_failed"] += 1
         elif t == "hook_gate":
             c["gate_" + str(ev.get("event"))] += 1
+            c["gate_mode_" + str(ev.get("mode") or "unknown")] += 1
         elif t == "bypass":
             c["bypass"] += 1
         elif t == "test_run":
             c["test_runs"] += 1
             c["test_green"] += 1 if ev.get("green") else 0
+            for k in ("passed", "failed", "skipped"):
+                c["tests_" + k] += _int(ev.get(k))
         elif t == "review" and ev.get("kind") == "outcome":
             c["review_findings"] += int(ev.get("findings") or 0)
             c["review_confirmed"] += int(ev.get("confirmed") or 0)
         elif t == "correction":
             c["corrections"] += 1
+        elif t == "lesson_recall":
+            c["lesson_recalls"] += 1
     return dict(sorted(c.items()))
 
 
@@ -132,6 +174,8 @@ def build(repo: Path, since: str) -> dict:
         "families": {f: list(t) for f, t in FAMILIES.items()},
         "by_day": grouped(events, lambda ev: ev["ts"][:10]),
         "by_user": grouped(events, lambda ev: ev["user"]),
+        "by_task": by_task(events),
+        "by_lesson_card": by_lesson_card(events),
     }
 
 
@@ -160,6 +204,12 @@ def render_md(data: dict) -> str:
              "Families: " + "; ".join(f"{f}={'/'.join(t)}" for f, t in data["families"].items()), ""]
     lines += _table("By day", "day", data["by_day"])
     lines += _table("By user hash", "user", data["by_user"])
+    lines += ["## By task", "", "| task | test_runs | first_green_index |", "|---|---|---|"]
+    lines += [f"| {t} | {r['test_runs']} | {r['first_green_index'] or '-'} |" for t, r in data["by_task"].items()]
+    lines += ["", "## By lesson card (best-effort: matched by task hash and ts)", "",
+              "| card | recalls | corrections_after_recall |", "|---|---|---|"]
+    lines += [f"| {c} | {r['recalls']} | {r['corrections_after_recall']} |" for c, r in data["by_lesson_card"].items()]
+    lines.append("")
     return "\n".join(lines)
 
 

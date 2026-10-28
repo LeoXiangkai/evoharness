@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import datetime as dt
 import os
 from pathlib import Path
 
@@ -90,8 +91,53 @@ def _telemetry(home: Path, source: Path | None) -> list[tuple[str, str, str]]:
     detail = (f"last_success={info.get('last_success') or '-'} last_error={last_error or '-'} "
               f"spool={info.get('spool_files', 0)}文件/{info.get('spool_bytes', 0)}B pending={info.get('pending', 0)} "
               f"collect_repo: {reach}")
-    rows.append((WARN if last_error else PASS, "telemetry-report", detail))
+    stale = _report_stale(lib, home / ".claude", info)
+    if stale:
+        detail += f"；{stale}"
+    rows.append((WARN if (last_error or stale) else PASS, "telemetry-report", detail))
     return rows
+
+
+def _utc(text: object) -> dt.datetime | None:
+    try:
+        parsed = dt.datetime.fromisoformat(str(text).strip().replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=dt.timezone.utc)
+
+
+def _oldest_pending(lib, claude: Path) -> dt.datetime | None:
+    """UTC day of the oldest spool file that still holds un-uploaded bytes; None when nothing is pending."""
+    try:
+        offsets = lib._load_state(claude).get("upload_offsets", {})
+        spool = claude / "aicj" / "telemetry" / "spool"
+        days = []
+        for f in sorted(spool.glob("*.jsonl")):
+            done = offsets.get(f.name, 0)
+            if isinstance(done, int) and done < f.stat().st_size:
+                day = _utc(f.stem)
+                if day is not None:
+                    days.append(day)
+        return min(days) if days else None
+    except Exception:
+        return None
+
+
+def _report_stale(lib, claude: Path, info: dict) -> str:
+    """Non-empty reason when uploads have not succeeded for 3 intervals."""
+    try:
+        limit = dt.timedelta(hours=3 * float(info.get("upload_interval_hours") or 24))
+        now = dt.datetime.now(dt.timezone.utc)
+        success = _utc(info.get("last_success")) if info.get("last_success") else None
+        if success is not None:
+            return "超过 3 个上报周期未成功上报" if now - success > limit else ""
+        if info.get("pending", 0) > 0:
+            oldest = _oldest_pending(lib, claude)
+            if oldest is not None and now - oldest > limit:
+                return "从未成功上报，且有事件积压超过 3 个上报周期"
+    except Exception:
+        return ""
+    return ""
 
 
 def _hud(home: Path, loaded: manifest.Manifest) -> list[tuple[str, str, str]]:

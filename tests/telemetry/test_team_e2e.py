@@ -154,6 +154,7 @@ def test_team_flow_end_to_end(tmp_path):
     ):
         h = _hook(claude, payload)
         assert h.returncode == 0 and h.stdout == ""
+        time.sleep(1.1)  # ts has 1s resolution; keep the failing and green runs ordered
 
     tool = claude / "bin" / "aicj-telemetry"
     rep = subprocess.run([sys.executable, str(tool), "report", "--force"], env=_env(claude),
@@ -164,7 +165,11 @@ def test_team_flow_end_to_end(tmp_path):
     content = "".join(files.values())
     rows = [json.loads(x) for x in content.splitlines() if x.strip()]
     types = Counter(x["type"] for x in rows)
-    assert types["install"] == 2  # join + reinstall; the no-team install and the rejected config emit nothing
+    # join + reinstall + the rejected config on an existing team (ok=false); the no-team install emits nothing
+    assert types["install"] == 3
+    installs = [x for x in rows if x["type"] == "install"]
+    assert sorted(x["ok"] for x in installs) == [False, True, True]
+    assert [x["error_kind"] for x in installs if not x["ok"]] == ["UserError"]
     exact = {k: v for k, v in types.items() if k != "install"}
     assert exact == {"hook_gate": 1, "bypass": 1, "test_run": 2, "review": 2, "task_snapshot": 1,
                      "correction": 1, "lesson_card": 1, "lesson_recall": 1}
@@ -189,10 +194,15 @@ def test_team_flow_end_to_end(tmp_path):
         assert sum(u["families"][fam] for u in data["by_user"].values()) == totals[fam], fam
     assert DAY in data["by_day"]
     assert data["by_day"][DAY]["families"]["rework"] == 2
-    assert data["by_day"][DAY]["families"]["lesson"] >= 2
+    assert data["by_day"][DAY]["families"]["lesson"] == 2
     assert list(data["by_user"]) == [user_hash]
+    assert [(t["test_runs"], t["first_green_index"]) for t in data["by_task"].values()] == [(2, 2)]
+    assert [(c["recalls"], c["corrections_after_recall"]) for c in data["by_lesson_card"].values()] == [(1, 0)]
+    detail = data["by_user"][user_hash]["detail"]
+    assert {k: v for k, v in detail.items() if k.startswith("gate_mode_")} == {"gate_mode_warn": 1}
+    assert (detail["tests_passed"], detail["tests_failed"]) == (4, 2)
     md = _agg(clone, "md")
-    assert "## By day" in md and "## By user hash" in md and DAY in md and user_hash in md
+    assert "## By day" in md and "## By user hash" in md and "## By task" in md and "## By lesson card" in md and DAY in md and user_hash in md
     assert str(repo) not in md and "event_id" not in md
 
     # second report is idempotent

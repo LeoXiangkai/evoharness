@@ -1,0 +1,102 @@
+from __future__ import annotations
+
+import json
+import os
+import subprocess
+import sys
+
+import pytest
+
+from .conftest import REPO_ROOT as REPO, spool_events
+
+sys.path.insert(0, str(REPO / "installer"))
+from lib import telemetry as inst_tel  # noqa: E402
+from lib.util import UserError  # noqa: E402
+
+AICJ = REPO / "installer" / "aicj.py"
+
+
+def run_aicj(*args, home):
+    env = dict(os.environ, AICJ_SKIP_HUD="1")
+    return subprocess.run([sys.executable, str(AICJ), *args, "--home", str(home), "--source", str(REPO)],
+                          capture_output=True, text=True, encoding="utf-8", cwd=str(REPO), env=env, timeout=180)
+
+
+def _join(tmp_path, home):
+    team = tmp_path / "team-in.json"
+    team.write_text(json.dumps({"team_id": "team1", "collect_repo": str(tmp_path / "none.git"),
+                                "salt": "salt-abc", "branch": "main"}), encoding="utf-8")
+    r = run_aicj("install", "--packs", "none", "--team-config", str(team), home=home)
+    assert r.returncode == 0, r.stdout + r.stderr
+
+
+def _installs(home):
+    return [e for e in spool_events(home / ".claude") if e["type"] == "install"]
+
+
+def test_failed_reinstall_on_team_emits_ok_false_with_error_kind(tmp_path):
+    home = tmp_path / "home"
+    _join(tmp_path, home)
+    before = len(_installs(home))
+    (home / ".claude" / "settings.json").write_text("{not json", encoding="utf-8")
+    r = run_aicj("install", "--packs", "none", home=home)
+    assert r.returncode != 0
+    new = _installs(home)[before:]
+    assert [(e["command"], e["ok"], e["error_kind"]) for e in new] == [("install", False, "UserError")]
+
+
+def test_failed_uninstall_on_team_emits_ok_false(tmp_path):
+    home = tmp_path / "home"
+    _join(tmp_path, home)
+    before = len(_installs(home))
+    (home / ".claude" / "settings.json").write_text("{not json", encoding="utf-8")
+    r = run_aicj("uninstall", home=home)
+    assert r.returncode != 0
+    new = _installs(home)[before:]
+    assert [(e["command"], e["ok"], e["error_kind"]) for e in new] == [("uninstall", False, "UserError")]
+
+
+def test_failed_install_without_team_leaves_no_telemetry_footprint(tmp_path):
+    home = tmp_path / "home"
+    (home / ".claude").mkdir(parents=True)
+    (home / ".claude" / "settings.json").write_text("{not json", encoding="utf-8")
+    r = run_aicj("install", "--packs", "none", home=home)
+    assert r.returncode != 0
+    assert not (home / ".claude" / "aicj").exists()
+
+
+def _team(**over):
+    team = {"team_id": "team1", "collect_repo": "https://example.test/x.git", "salt": "s", "branch": "main"}
+    team.update(over)
+    return json.dumps(team).encode()
+
+
+def test_validate_team_bytes_rejects_trailing_newline_team_id():
+    with pytest.raises(UserError):
+        inst_tel.validate_team_bytes(_team(team_id="demo\n"))
+    assert b"team1" in inst_tel.validate_team_bytes(_team())
+
+
+def test_validate_team_bytes_rejects_dash_collect_repo_and_unsafe_branch():
+    with pytest.raises(UserError):
+        inst_tel.validate_team_bytes(_team(collect_repo="--upload-pack=x"))
+    for branch in ("-x", "a..b", "a b", "x.lock", "/x", "a@{b"):
+        with pytest.raises(UserError):
+            inst_tel.validate_team_bytes(_team(branch=branch))
+    inst_tel.validate_team_bytes(_team(branch="feature/ok"))
+
+
+def test_safe_ref_mirror_agrees_with_library():
+    sys.path.insert(0, str(REPO / "core" / "hooks"))
+    import aicj_telemetry as tel
+    for name in ("main", "feature/ok", "-x", "a..b", "a b", "x.lock", "/x", "a/", "a@{b", "a~1", "a\x01", "", "x."):
+        assert inst_tel._safe_ref(name) == tel._safe_ref(name), name
+
+
+def test_existing_team_bytes_validates(tmp_path):
+    p = tmp_path / ".claude" / "aicj"
+    p.mkdir(parents=True)
+    (p / "team.json").write_bytes(_team(collect_repo="-bad"))
+    assert inst_tel.existing_team_bytes(tmp_path) is None
+    (p / "team.json").write_bytes(_team())
+    assert inst_tel.existing_team_bytes(tmp_path) is not None

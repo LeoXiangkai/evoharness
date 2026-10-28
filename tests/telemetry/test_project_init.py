@@ -47,3 +47,20 @@ def test_project_init_without_installed_library_still_succeeds(claude, team, tmp
     target.mkdir()
     assert _init(claude, target).returncode == 0
     assert spool_events(claude) == []
+
+
+def test_project_init_failure_with_team_emits_ok_false(claude, team, tmp_path):
+    _install_lib(claude)
+    target = tmp_path / "not-a-dir"
+    target.write_text("file", encoding="utf-8")
+    r = _init(claude, target)
+    assert r.returncode == 1
+    evs = spool_events(claude)
+    assert [(e["type"], e["ok"], e.get("error_kind")) for e in evs] == [("project_init", False, "TargetNotDirectory")]
+
+
+def test_project_init_failure_without_team_writes_no_telemetry(claude, tmp_path):
+    _install_lib(claude)
+    target = tmp_path / "missing"
+    assert _init(claude, target).returncode == 1
+    assert not (claude / "aicj").exists()

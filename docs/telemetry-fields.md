@@ -34,3 +34,5 @@ Values are tokens (`[A-Za-z0-9._:+-]{1,64}`), hashes (`[0-9a-f]{8,64}`), ints, b
 | correction | (no fields) |
 | lesson_card | card, level (hint, warn, block), scope_kind (global, path), status (active, retired), created |
 | lesson_recall | card, level (hint, warn, block) |
+
+Aggregate output (`scripts/telemetry_aggregate.py`) derives, without adding event fields: hook gate counts by mode, test passed/failed/skipped sums, lesson recalls, By task (test runs, first green index) and By lesson card (recalls, corrections after first recall; best-effort by task hash and ts).

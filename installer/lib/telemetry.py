@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import re
 import subprocess
 import sys
@@ -21,7 +22,14 @@ TEAM_REL = ".claude/aicj/team.json"
 LIB_REL = "hooks/aicj/aicj_telemetry.py"
 FETCH_TIMEOUT = 15
 MAX_BYTES = 64 * 1024
-_TOKEN_RE = re.compile(r"^[A-Za-z0-9._:+-]{1,64}$")
+_TOKEN_RE = re.compile(r"[A-Za-z0-9._:+-]{1,64}")
+
+
+def _safe_ref(name: str) -> bool:
+    """Mirror of aicj_telemetry._safe_ref (the installer must not import hook code): keep in sync."""
+    return (bool(name) and not name.startswith(("-", "/")) and not name.endswith(("/", ".", ".lock"))
+            and ".." not in name and "//" not in name and "@{" not in name
+            and not re.search(r"[\s~^:?*\[\\\x00-\x1f\x7f]", name))
 
 
 def _read_spec(spec: str) -> bytes:
@@ -63,12 +71,18 @@ def validate_team_bytes(data: bytes, label: str = "team config") -> bytes:
     if not isinstance(raw, dict):
         raise UserError(f"{label}: top level must be a JSON object")
     team_id = raw.get("team_id")
-    if not isinstance(team_id, str) or not _TOKEN_RE.match(team_id):
+    if not isinstance(team_id, str) or not _TOKEN_RE.fullmatch(team_id):
         raise UserError(f"{label}: team_id must match [A-Za-z0-9._:+-]{{1,64}}")
     for key in ("collect_repo", "salt"):
         value = raw.get(key)
         if not isinstance(value, str) or not value.strip():
             raise UserError(f"{label}: {key} is required and must be a non-blank string")
+    if raw["collect_repo"].strip().startswith("-"):
+        raise UserError(f"{label}: collect_repo must not start with '-'")
+    branch = raw.get("branch")
+    if branch is not None:
+        if not isinstance(branch, str) or (branch.strip() and not _safe_ref(branch.strip())):
+            raise UserError(f"{label}: branch is not a safe git ref name")
     return (json.dumps(raw, ensure_ascii=False, indent=2, sort_keys=True) + "\n").encode("utf-8")
 
 
@@ -82,8 +96,8 @@ def existing_team_bytes(home: Path) -> bytes | None:
     try:
         if not path.is_file() or path.is_symlink():
             return None
-        return path.read_bytes()
-    except OSError:
+        return validate_team_bytes(path.read_bytes(), "existing team.json")
+    except (OSError, UserError):
         return None
 
 
@@ -126,14 +140,14 @@ def emit_install(home: Path, source: Path | None, command: str, ok: bool, *,
             return
         data: dict = {"command": command, "ok": bool(ok),
                       "python": f"{sys.version_info[0]}.{sys.version_info[1]}.{sys.version_info[2]}"}
-        if error_kind and _TOKEN_RE.match(error_kind):
+        if error_kind and _TOKEN_RE.fullmatch(error_kind):
             data["error_kind"] = error_kind
         if options is not None:
-            data["packs"] = [p for p in options.packs if _TOKEN_RE.match(str(p))]
-            data["adapters"] = [a for a in options.adapters if _TOKEN_RE.match(str(a))]
+            data["packs"] = [p for p in options.packs if _TOKEN_RE.fullmatch(str(p))]
+            data["adapters"] = [a for a in options.adapters if _TOKEN_RE.fullmatch(str(a))]
             data["hook_mode"] = "block" if options.strict else "warn"
         if failed_checks:
-            data["failed_checks"] = [c for c in failed_checks if _TOKEN_RE.match(str(c))]
+            data["failed_checks"] = [c for c in failed_checks if _TOKEN_RE.fullmatch(str(c))]
         lib.emit(home / ".claude", "install", data)
     except Exception:
         return
@@ -150,7 +164,6 @@ def uninstall_report(home: Path, source: Path | None, timeout: int = 60) -> None
         if not script.is_file() or not lib.is_file():
             return
         env_claude = str(home / ".claude")
-        import os
         env = dict(os.environ, AICJ_CLAUDE_DIR=env_claude)
         subprocess.run([sys.executable, str(script), "report", "--force"], env=env, timeout=timeout,
                        stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,

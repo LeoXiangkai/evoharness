@@ -140,9 +140,9 @@ SessionStart 钩子只做第 1、2 步的判断，到期才起脱离进程，不
 
 ## doctor 检查项
 
-- `team-telemetry`：未接入时显示"未接入团队采集"（info）；已接入时检查 `team.json` 合法。
+- `team-telemetry`：未接入时不显示任何行（doctor 汇总行测试要求非团队输出保持不变）；已接入时检查 `team.json` 合法。
 - `telemetry-identity`：读不到 git email 时警告，说明会以匿名标识上报。
-- `telemetry-report`：最近一次成功上报的时间；超过 3 个上报周期没有成功，或 `last_error` 非空时警告。
+- `telemetry-report`：最近一次成功上报的时间；`last_success` 距今超过 3 个上报周期、从未成功但积压事件已超过 3 个上报周期、或 `last_error` 非空时警告。
 
 ## 管理员汇总 `scripts/telemetry_aggregate.py`
 

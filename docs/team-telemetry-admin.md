@@ -21,9 +21,17 @@ Members join with `aicj install --team-config <URL|file://|path>` (Windows: `ins
 git clone -b main <collect repo> collect && python3 scripts/telemetry_aggregate.py --repo collect --since 2026-10-01 --format md
 ```
 
-Output: totals, plus tables by day and by user hash for the families install, hook, task, rework and lesson. `--format json` gives the same data. Rows are re-validated and de-duplicated by event_id; raw events are never printed.
+Output: totals, plus tables by day and by user hash for the families install, hook, task, rework and lesson. `--format json` gives the same data. Rows are re-validated and de-duplicated by event_id across all files (the same event can appear in two `<user>-<install>.jsonl` files after a local reset); raw events are never printed.
+
+Per-user detail counters: hook gates split by event and by mode (`gate_mode_warn|block|unknown`), test runs with `tests_passed|failed|skipped` sums, and `lesson_recalls` (shown separately from lesson cards).
+- By task: per task hash, `test_runs` and `first_green_index` (1-based, ordered by ts; `-` if never green).
+- By lesson card: per card, `recalls` and `corrections_after_recall` (corrections in the same task after the card's first recall). Best-effort: matched only by task hash and ts, so it indicates, not proves, a lesson effect.
+
+`aicj doctor` shows a `telemetry-report` row only for team installs. It WARNs when `last_error` is set, when `last_success` is older than 3 x `upload_interval_hours`, or when there has never been a success and spool events have been pending longer than that.
 
 ## 4. Limits
 
 The salt is shared by the whole team, so anyone holding it can brute-force a known identity against the user hash. Treat hashes as pseudonymous, not anonymous. Rotating the salt breaks per-user continuity.
 Members can inspect status with `aicj-telemetry status` and force an upload with `aicj-telemetry report --force`.
+
+Install health events (`install`, `uninstall`, `project_init`) are emitted on failure too (`ok=false`, `error_kind` = exception class name). A failing `--team-config` fetch happens before team.json exists, so it produces no event.
