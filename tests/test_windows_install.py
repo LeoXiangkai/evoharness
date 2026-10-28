@@ -224,3 +224,10 @@ def test_permission_retry_writes_utf8_and_propagates_exhaustion(tmp_path, monkey
         util.atomic_write_text(target, 'overwrite')
     assert target.read_bytes() == '中文'.encode('utf-8')
     assert sorted(p.name for p in tmp_path.iterdir()) == ['config.json']
+
+
+def test_windows_script_passes_team_config_through() -> None:
+    text = (REPO / "scripts/windows/install.ps1").read_bytes().decode("utf-8-sig")
+    assert "[string]$TeamConfig" in text
+    assert '$installArgs += "--team-config"; $installArgs += $TeamConfig' in text
+    assert text.index('"--team-config"') > text.index('$installArgs = @("install")')

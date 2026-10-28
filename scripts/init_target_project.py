@@ -247,6 +247,24 @@ Global runtime skills remain owned by Codex, Claude Code, or OMX.
 """
 
 
+def emit_project_init_telemetry() -> None:
+    """Best-effort team telemetry via the installed library; no-op when absent or without a team config."""
+    try:
+        import os
+
+        override = os.environ.get("AICJ_CLAUDE_DIR", "").strip()
+        claude = Path(override).expanduser() if override else Path.home() / ".claude"
+        lib_dir = claude / "hooks" / "aicj"
+        if not (lib_dir / "aicj_telemetry.py").is_file():
+            return
+        sys.path.insert(0, str(lib_dir))
+        import aicj_telemetry
+
+        aicj_telemetry.emit(claude, "project_init", {"ok": True}, cwd=os.getcwd())
+    except Exception:
+        pass
+
+
 def main() -> int:
     args = parse_args()
     target = Path(args.target).expanduser().resolve()
@@ -300,6 +318,7 @@ def main() -> int:
     print("11. Run .ai-coding-java/scripts/artifact_consistency_check.py .ai-coding-java/artifacts/<work-id> for complex tasks.")
     print("12. Run .ai-coding-java/scripts/evidence_check.py <delivery-report.md> before delivery when evidence quality matters.")
     print("13. Decide whether .ai-coding-java/ stays local-only or is committed.")
+    emit_project_init_telemetry()
     return 0
 
 

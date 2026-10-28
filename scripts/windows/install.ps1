@@ -14,7 +14,8 @@ param(
     [string]$CpaToken,
     [string]$CpaDir = (Join-Path $env:LOCALAPPDATA "cliproxyapi"),
     [switch]$InstallCpa,
-    [string]$Adapters = ""
+    [string]$Adapters = "",
+    [string]$TeamConfig = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -227,6 +228,7 @@ try {
         $installArgs = @("install") + $homeArgs
         if ($adapterNames.Count -gt 0) { $installArgs += "--adapters"; $installArgs += (($adapterNames | Select-Object -Unique) -join ",") }
         if ($NoHud) { $installArgs += "--no-hud" }
+        if (-not [string]::IsNullOrWhiteSpace($TeamConfig)) { $installArgs += "--team-config"; $installArgs += $TeamConfig }
         & py -3 installer/aicj.py @installArgs
         Assert-ExitCode "aicj 安装"
         Install-CcLauncher

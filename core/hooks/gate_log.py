@@ -62,6 +62,14 @@ def cmd_or_path(payload: dict) -> str:
     return ""
 
 
+def _mode() -> str:
+    try:
+        from hook_mode import hook_mode
+        return str(hook_mode()) or "unknown"
+    except Exception:
+        return "unknown"
+
+
 def append_event(hook_name: str, event: str, rule: str, raw_input: str) -> None:
     try:
         payload = json.loads(raw_input) if raw_input else {}
@@ -75,6 +83,7 @@ def append_event(hook_name: str, event: str, rule: str, raw_input: str) -> None:
         "ts": iso8601(),
         "hook": hook_name,
         "event": event,
+        "mode": _mode(),
         "rule": sanitize(rule, 80),
         "tool": tool,
         "cmd": sanitize(cmd, 160),

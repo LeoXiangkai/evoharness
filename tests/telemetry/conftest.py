@@ -7,7 +7,8 @@ from pathlib import Path
 
 import pytest
 
-HOOKS = Path(__file__).resolve().parents[2] / "core" / "hooks"
+REPO_ROOT = Path(__file__).resolve().parents[2]
+HOOKS = REPO_ROOT / "core" / "hooks"
 if str(HOOKS) not in sys.path:
     sys.path.insert(0, str(HOOKS))
 

@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from . import engine, hud, index, manifest, mdblock, settings
+from . import engine, hud, index, manifest, mdblock, settings, telemetry
 from .util import UserError, is_windows
 
 PASS = "PASS"
@@ -51,6 +51,7 @@ def run_doctor(home: Path, source: Path | None = None) -> tuple[list[tuple[str, 
     checks.extend(_codex(home, loaded))
     checks.extend(_third_party(home))
     checks.extend(_hud(home, loaded))
+    checks.extend(_telemetry(home, source))
 
     missing = sum(1 for status, _name, _detail in checks if status == MISSING)
     return checks, 1 if missing else 0
@@ -62,6 +63,35 @@ def optional_skill_gap(home: Path) -> str | None:
     if skill.is_dir():
         return None
     return f"可选 skill 缺失：{skill} 未安装，需求澄清降级为直接问答"
+
+
+def _telemetry(home: Path, source: Path | None) -> list[tuple[str, str, str]]:
+    """Read-only: never creates telemetry files. Without team.json a single info row."""
+    if not telemetry.has_team(home):
+        return []  # not configured: no row, keeps the doctor summary unchanged
+    lib = telemetry._lib(home, source)
+    if lib is None:
+        return [(WARN, "team-telemetry", "已配置 team.json，但采集库缺失；重新安装可恢复")]
+    try:
+        info = lib.status(home / ".claude")
+    except Exception as exc:
+        return [(WARN, "team-telemetry", f"状态读取失败：{type(exc).__name__}")]
+    if not info.get("enabled"):
+        return [(WARN, "team-telemetry", "team.json 无效（需要 team_id/collect_repo/salt）")]
+    rows = [(PASS, "team-telemetry",
+             f"team={info.get('team_id')} branch={info.get('branch')} interval={info.get('upload_interval_hours')}h")]
+    anonymous = info.get("anonymous")
+    rows.append((WARN if anonymous else PASS, "telemetry-identity",
+                 f"user={info.get('user')} install={info.get('install')}"
+                 + (" 匿名（未配置 git user.email）" if anonymous else "")))
+    clone = home / ".claude" / "aicj" / "telemetry" / "collect-repo"
+    reach = "本地克隆存在" if (clone / ".git").exists() else "尚未克隆（首次上传后建立）"
+    last_error = info.get("last_error")
+    detail = (f"last_success={info.get('last_success') or '-'} last_error={last_error or '-'} "
+              f"spool={info.get('spool_files', 0)}文件/{info.get('spool_bytes', 0)}B pending={info.get('pending', 0)} "
+              f"collect_repo: {reach}")
+    rows.append((WARN if last_error else PASS, "telemetry-report", detail))
+    return rows
 
 
 def _hud(home: Path, loaded: manifest.Manifest) -> list[tuple[str, str, str]]:

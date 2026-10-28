@@ -9,6 +9,7 @@ from collections import Counter
 from pathlib import Path
 
 from lib import doctor as doctor_mod
+from lib import telemetry as telemetry_mod
 from lib import engine, index, manifest
 from lib import selftest as selftest_mod
 from lib.util import UserError, abspath
@@ -46,6 +47,8 @@ def build_parser() -> argparse.ArgumentParser:
     install.add_argument("--link", action="store_true", help="symlink instead of copy")
     install.add_argument("--on-conflict", choices=("skip", "backup"), default="skip")
     install.add_argument("--no-hud", action="store_true", help="do not install the claude-hud status line")
+    install.add_argument("--team-config", default="", metavar="URL|PATH",
+                         help="join team telemetry: http(s)/file:// URL or path of a team.json")
     install.add_argument("--dry-run", action="store_true")
 
     uninstall = sub.add_parser("uninstall", help="remove what the manifest records as ours", allow_abbrev=False)
@@ -131,6 +134,7 @@ def cmd_install(args: argparse.Namespace) -> int:
         on_conflict=args.on_conflict,
         enable_hooks=list(args.enable_hook),
         no_hud=args.no_hud,
+        team_config=args.team_config,
     )
     report, _result = engine.run_install(home, source, options, args.dry_run)
     _print_report("install", report, args.dry_run)
@@ -167,6 +171,8 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         print(f"{status:<8} {name}  {detail}")
     counts = Counter(status for status, _name, _detail in checks)
     print("summary          " + " ".join(f"{name}={counts[name]}" for name in sorted(counts)))
+    telemetry_mod.emit_install(home, _source(args, None), "doctor", code == 0,
+                               failed_checks=[name for status, name, _d in checks if status == "MISSING"])
     if code == 0:
         for text in NEXT_STEPS:
             print(f"下一步  {text}")
