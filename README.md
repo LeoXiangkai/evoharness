@@ -1,5 +1,7 @@
 # ai-coding-java
 
+**EvoHarness**：AI Coding 规则 + Harness 约束 + 自进化循环（使用记录采集 → 管理员复盘 → 框架改进）。
+
 可复用的 AI Coding 全局安装组件与项目档案工具。仓库名保留，能力覆盖 Java、Python、Vue：统一规则路由、需求与设计流程、验证证据、交付模板和轻量 Git 保护。
 
 ## 两层职责

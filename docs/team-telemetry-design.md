@@ -1,6 +1,6 @@
 # 团队采集设计
 
-团队推广安装与使用记录采集的冻结契约。字段权威是 `core/hooks/aicj_telemetry.py` 的 `SCHEMA`，[字段说明](telemetry-fields.md) 与它逐项一致，由测试对账。
+团队推广安装与使用记录采集的冻结契约，是 EvoHarness 自进化循环的数据入口。字段权威是 `core/hooks/aicj_telemetry.py` 的 `SCHEMA`，[字段说明](telemetry-fields.md) 与它逐项一致，由测试对账。
 
 ## 已冻结决策
 
