@@ -373,10 +373,12 @@ def _builtin_slash() -> frozenset:
 
 
 def _other_signals(claude: Path, payload: dict, tool: str) -> None:
+    event = str(payload.get("hook_event_name") or "").strip()
+    if event == "UserPromptSubmit" and not _SLASH_RE.match(str(payload.get("prompt") or "").lstrip()):
+        return  # plain prompts: prefix check only, no telemetry import
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     import aicj_telemetry as tel
 
-    event = str(payload.get("hook_event_name") or "").strip()
     cwd = payload.get("cwd") if isinstance(payload.get("cwd"), str) and payload.get("cwd") else None
     tool_input = payload.get("tool_input") if isinstance(payload.get("tool_input"), dict) else {}
     if event == "UserPromptSubmit":
