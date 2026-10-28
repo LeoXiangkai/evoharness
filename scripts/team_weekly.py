@@ -38,6 +38,16 @@ NO_DATA = "无数据"
 LOW_N = "样本不足"
 LOW_N_TAG = "【低样本】"
 
+V_SHARED = "不可单独归因"
+V_FLAT = "持平"
+V_IMPROVED = "已改善"
+V_WORSE = "未改善"
+A_KEEP = "保留"
+A_REVOKE = "撤掉"
+A_MANUAL = "人工判定"
+A_DECIDE = "保留或撤掉（二选一，不可再延期）"
+A_DEFER_OR_DECIDE = "可延期一次，或保留 / 撤掉"
+
 FIXED_KEYS = (
     "install_failure_rate", "test_green_rate", "first_green_index_median",
     "corrections_per_task_day", "rework_files_per_task", "commits_after_review_per_task",
@@ -117,6 +127,11 @@ def latest_snapshots(events: list[dict]) -> list[dict]:
     return list(latest.values())
 
 
+def _int(value) -> int:
+    """Same semantics as telemetry_aggregate._int: real ints only, anything else (bool, str, None) is 0."""
+    return value if isinstance(value, int) and not isinstance(value, bool) else 0
+
+
 def compute_metrics(events: list[dict], min_n: int) -> dict[str, dict]:
     """key -> {"value": number|None, "n": denominator}. Ratios with n < min_n are None."""
     out: dict[str, dict] = {}
@@ -131,9 +146,9 @@ def compute_metrics(events: list[dict], min_n: int) -> dict[str, dict]:
     out["corrections_per_task_day"] = _ratio(sum(1 for e in events if e["type"] == "correction"),
                                              len(snaps), min_n)
     latest = latest_snapshots(events)
-    out["rework_files_per_task"] = _ratio(sum(agg._int(s.get("files_touched_repeatedly")) for s in latest),
+    out["rework_files_per_task"] = _ratio(sum(_int(s.get("files_touched_repeatedly")) for s in latest),
                                           len(latest), min_n)
-    out["commits_after_review_per_task"] = _ratio(sum(agg._int(s.get("commits_after_review")) for s in latest),
+    out["commits_after_review_per_task"] = _ratio(sum(_int(s.get("commits_after_review")) for s in latest),
                                                   len(latest), min_n)
     have = bool(events)
     bypass = Counter(e.get("kind") for e in events if e["type"] == "bypass")
@@ -304,27 +319,34 @@ def judge_trial(trial: dict, current: dict | None, baseline: float | None, share
     cur = current.get("value") if current else None
     at_best = False
     if shared:
-        verdict = "不可单独归因"
+        verdict = V_SHARED
     elif cur is None or baseline is None:
         verdict = LOW_N
     elif math.isclose(cur, baseline, rel_tol=0, abs_tol=1e-9):
-        verdict = "持平"
+        verdict = V_FLAT
         best = best_value(trial["metric"])
         at_best = best is not None and math.isclose(cur, best, rel_tol=0, abs_tol=1e-9)
     elif trial["direction"] == "down":
-        verdict = "已改善" if cur < baseline else "未改善"
+        verdict = V_IMPROVED if cur < baseline else V_WORSE
     else:
-        verdict = "已改善" if cur > baseline else "未改善"
-    undecided = "保留或撤掉（二选一，不可再延期）"
-    if verdict == "持平":
-        advice = "保留" if at_best else undecided if trial["deferred"] == 1 else "人工判定"
+        verdict = V_IMPROVED if cur > baseline else V_WORSE
+    if verdict == V_FLAT:
+        advice = A_KEEP if at_best else A_DECIDE if trial["deferred"] == 1 else A_MANUAL
     elif trial["deferred"] == 1:
-        advice = "保留" if verdict == "已改善" else "撤掉" if verdict == "未改善" else undecided
+        advice = A_KEEP if verdict == V_IMPROVED else A_REVOKE if verdict == V_WORSE else A_DECIDE
     else:
-        advice = {"已改善": "保留", "未改善": "撤掉"}.get(verdict, "可延期一次，或保留 / 撤掉")
+        advice = {V_IMPROVED: A_KEEP, V_WORSE: A_REVOKE}.get(verdict, A_DEFER_OR_DECIDE)
     return {"id": trial["id"], "title": trial["title"], "metric": trial["metric"], "direction": trial["direction"],
             "baseline": baseline, "current": cur, "deferred": trial["deferred"],
             "verdict": verdict, "advice": advice, "undo": trial["undo"]}
+
+
+def _metric_or_zero(metrics: dict[str, dict], key: str) -> dict | None:
+    """A gate_deny key absent from a week that has events means zero denies, not unknown."""
+    m = metrics.get(key)
+    if m is None and key.startswith("gate_deny:") and metrics["bypass_total"]["value"] is not None:
+        return {"value": 0, "n": None}
+    return m
 
 
 def due_trials(trials: dict[str, dict], metrics: dict[str, dict], events: list[dict],
@@ -339,14 +361,10 @@ def due_trials(trials: dict[str, dict], metrics: dict[str, dict], events: list[d
         if baseline is None:
             reg_start, reg_end = week_bounds(shift_week(week_id(dt.date.fromisoformat(t["registered"])), -1))
             base_metrics = compute_metrics(in_window(events, reg_start, reg_end), min_n)
-            baseline = base_metrics.get(t["metric"], {}).get("value")
-            if baseline is None and t["metric"] not in base_metrics and t["metric"].startswith("gate_deny:") \
-                    and base_metrics["bypass_total"]["value"] is not None:
-                baseline = 0  # no deny of that rule in a baseline week that has events
-        shared = metric_users[t["metric"]] > 1 or bool(t["shared_metric_with"])
-        current = metrics.get(t["metric"])
-        if current is None and t["metric"].startswith("gate_deny:") and metrics["bypass_total"]["value"] is not None:
-            current = {"value": 0, "n": None}  # no deny of that rule in a week that has events
+            baseline = (_metric_or_zero(base_metrics, t["metric"]) or {}).get("value")
+        same_metric_ids = {u["id"] for u in active if u["metric"] == t["metric"]} - {t["id"]}
+        shared = metric_users[t["metric"]] > 1 or any(sid in same_metric_ids for sid in t["shared_metric_with"])
+        current = _metric_or_zero(metrics, t["metric"])
         out.append(judge_trial(t, current, baseline, shared))
     return out
 
@@ -419,7 +437,7 @@ def idle_cards(all_events: list[dict], end: dt.datetime) -> list[dict]:
         elif e["type"] == "lesson_recall" and e["ts"] >= lo:
             recalled.add(card)
     return [{"card": c, "last_card_event": latest[c]["ts"]} for c in sorted(latest)
-            if latest[c].get("status") == "active" and c not in recalled and first_seen[c] < lo]
+            if latest[c].get("status") == "active" and c not in recalled and first_seen[c] <= lo]
 
 
 # ---------------------------------------------------------------------------
@@ -437,8 +455,8 @@ def _cell(metrics: dict, key: str) -> str:
 def stage_table(metrics: dict, window: list[dict]) -> list[dict]:
     reviews = [e for e in window if e["type"] == "review" and e.get("kind") == "outcome"]
     if reviews:
-        review_cell = (f"review_findings={sum(agg._int(e.get('findings')) for e in reviews)}，"
-                       f"review_confirmed={sum(agg._int(e.get('confirmed')) for e in reviews)}")
+        review_cell = (f"review_findings={sum(_int(e.get('findings')) for e in reviews)}，"
+                       f"review_confirmed={sum(_int(e.get('confirmed')) for e in reviews)}")
     else:
         review_cell = f"review findings/confirmed={NO_DATA}"
     return [
@@ -483,7 +501,7 @@ def build(repo: Path, week: str, min_n: int) -> dict:
             "suspected_misblock": misblocks,
             "low_efficiency_cards": low_cards,
             "idle_cards": idle_cards(events, end),
-            "trials_not_improved": [d["id"] for d in due if d["verdict"] == "未改善"],
+            "trials_not_improved": [d["id"] for d in due if d["verdict"] == V_WORSE],
         },
         "stages": stage_table(metrics, window),
         "trial_problems": problems,
