@@ -4,38 +4,48 @@ Latest delivery for this repository. Overwrite this file on each delivery; histo
 
 ## Summary
 
-Weekly team review for EvoHarness (operations phase, first step): `scripts/team_weekly.py` reads the
-telemetry collect repo and prints ISO-week metrics with week-over-week comparison, verdicts for due trials
-from `admin/trials.jsonl` (improved / not improved / tie / low sample / not attributable), subtraction
-candidates with sample size labels, and a four-stage table. The `team-weekly` skill (optional adapter
-`team-admin`, admins only) turns the report into one batch confirmation and writes decisions and the
-trial ledger back under `admin/`. Weekly cadence; nothing is executed automatically.
+Three new team telemetry signals for EvoHarness (design: `docs/team-signals-design.md`):
 
-Changed files: `scripts/team_weekly.py`, `adapters/team-admin/**`, `tests/telemetry/test_team_weekly.py`,
-`docs/team-weekly-design.md`, `docs/team-telemetry-admin.md`, `docs/runtime-skill-boundary.md`.
+- rework cause: each correction is classified on the member machine into A–G by keyword rules `r1`; only
+  the letter, the rule version and the skill used within 10 minutes before (same session) are uploaded;
+- skill use: Skill tool calls and leading slash commands (built-in commands excluded); framework skills by
+  name, others as a salted hash;
+- ask_user: question count of each AskUserQuestion call.
+
+Aggregate and weekly review gain `rework_share:<A..G>`, `skill_corrected_ratio:<skill>`,
+`ask_user_per_task_day`, the four-stage table uses them, plus a G-share alert and idle-skill candidates.
+A `--team-config` / `-TeamConfig` install adds the lesson adapter.
+
+Changed files: `core/hooks/aicj_telemetry.py`, `core/hooks/telemetry-capture.py`, `core/manifest.json`,
+`installer/aicj.py`, `scripts/windows/install.ps1`, `scripts/telemetry_aggregate.py`, `scripts/team_weekly.py`,
+`docs/telemetry-fields.md`, `docs/team-telemetry-admin.md`, `tests/telemetry/test_team_signals.py`,
+`tests/telemetry/test_team_e2e.py`.
 
 ## Verification
 
-- command: `python3 -m pytest tests -q -p no:cacheprovider` — result: passed, 696 passed, 0 skipped
+- command: `python3 -m pytest tests -q -p no:cacheprovider` — result: passed, 738 passed, 0 skipped
 - command: `python3 scripts/sanitize_check.py` — result: ok, exit 0
 - command: `python3 scripts/template_integrity_check.py` — result: ok, exit 0
-- command: `python3 scripts/context_budget_check.py` — result: ok, exit 0
-- command: `team_weekly.py` on a temporary collect repo (30 test runs, 25 green) — result: test_green_rate 0.83 (n=30); with `--min-n 40` shown as low sample; missing repo exits 2
-- command: temporary-HOME install `--adapters team-admin` → doctor → uninstall (test T12) — result: passed, no residue
+- command: `python3 scripts/context_budget_check.py` (main checkout) — result: ok, exit 0
+- command: `tests/telemetry/test_team_signals.py` — result: design tests S1–S9, S11 (42 cases) passed
+- command: team e2e (S10): temporary-HOME install with `--team-config` (lesson adapter registered) → real hook
+  entry for Skill / slash / AskUserQuestion → upload → aggregate → `team_weekly.py` → doctor → uninstall —
+  result: passed; uploaded files contain no correction text, question text or private skill name
 
 ## Review
 
 - P0: none
-- P1: none open; one independent review found 2 high and 3 medium issues (tie judged as not improved, review outcomes not written back to the ledger, low-sample candidates, gate_deny baseline, test gaps), all fixed
-- P2: a second scoped review found 5 low issues (idle-card creation boundary, shared-metric verdict after partner closed, skill write-back gaps, zero-denominator wording, missing override test) plus standards items (private helper use, duplicated fallback, verdict literals, task-numbered test names, weak assertion), all fixed; metric-direction table consolidation and long-method split deferred
-- P2: two limitations documented in `docs/team-weekly-design.md` (cross-week first-green bias, counts not normalized by activity)
+- P1: none
+- P2: independent reviewer not dispatched (user asked to stop using subagents); main-session diff self-review only
+- P2: known risk — skill-log pruning during collect can drop a skill-log row appended by a hook at the same
+  moment (local association data only; worst case one missing `after_skill`)
 
 ## Not-tested
 
-- item: weekly review on real team data — reason: collect repo not yet opened — remaining risk: thresholds (5 / 0.5 / 4 weeks / min-n 20) not calibrated
-- item: `team-weekly` skill run end to end by an admin — reason: needs a real collect repo and admin session — remaining risk: write-back rows malformed
-- item: real Windows machine install — reason: no Windows host available — remaining risk: PowerShell/path edge cases
+- item: `-TeamConfig` adding lesson in `scripts/windows/install.ps1` — reason: no Windows host — remaining risk: PowerShell edge cases
+- item: keyword rule accuracy on real corrections — reason: no real data yet — remaining risk: high G share; watch the G-share alert
+- item: Claude Code payload field names for Skill (`tool_input.skill`) and UserPromptSubmit (`prompt`) on a live session — reason: tested with synthetic payloads — remaining risk: empty signal if a field name differs
 
 ## Delivery decision
 
-Merged into `main`. Team collect repo opened (private); next: install with the team config on a member machine and run the first weekly review.
+Merged into `main`, not pushed; push awaits user confirmation.
