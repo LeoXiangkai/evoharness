@@ -48,3 +48,7 @@ Uploads use `ssh -o BatchMode=yes` unless the member already set `GIT_SSH_COMMAN
 - `bypass` counts ATTEMPTS, including ones a gate later blocked. This is intended.
 - A member who switches from the anonymous identity to an email identity appears as two user hashes.
 - Quiet test runs (Gradle printing only `BUILD SUCCESSFUL`, `mvn -q`) are recorded as a `test_run` with framework and green only; their counts are treated as 0 in `tests_passed|failed|skipped`.
+
+## Weekly review
+
+Administrators run a weekly review on the collect repo: `python3 scripts/team_weekly.py --repo <collect repo clone> [--week YYYY-Www] [--format md|json] [--min-n 20]` prints the week's numbers, due trials and subtraction candidates (read-only, exit 2 when the repo is missing or not a git repository). Install the `team-weekly` skill with `--adapters team-admin`; it turns the report into one batch confirmation and writes decisions and the trial ledger under `admin/`. Contract and thresholds: `docs/team-weekly-design.md`.

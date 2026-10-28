@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "detect": {"files": [], "package_deps": []},
+  "entries": {
+    "rules": [],
+    "refs": [],
+    "agents": [],
+    "skills": [{"source": "skills/team-weekly", "target": "skills/team-weekly"}],
+    "hooks": [],
+    "bin": [],
+    "templates": []
+  },
+  "hooks": []
+}
