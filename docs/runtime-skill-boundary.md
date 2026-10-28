@@ -11,7 +11,7 @@ ai-coding-java 提供全局组件与项目档案两层。安装结构以[全局�
 | `packs/python/skills/` | python-verify | Python 项目命令、静态检查、测试与 Web 启动验证 |
 | `packs/vue/skills/` | vue-verify、playwright-ui-auto | Vue 项目验证与 UI 自动化 |
 | `adapters/executor/skills/` | executor-handoff-ops | 选择 executor 后提供外部执行体交接流程 |
-| `adapters/lesson/`、`adapters/optional-plugins/` | lesson 机制，jev、verify-probe 工具壳与引用 | 可选适配，不代表第三方 skill 已安装；依赖不足时 SKIPPED |
+| `adapters/lesson/`、`adapters/optional-plugins/`、`adapters/team-admin/` | lesson 机制，jev、verify-probe 工具壳与引用，团队管理员周复盘 skill | 可选适配，不代表第三方 skill 已安装；依赖不足时 SKIPPED |
 | `skills/setup-ai-coding/` | 项目工作区初始化 | 项目档案层 skill 源；不代为执行全局安装 |
 | 第三方（本仓库不提供） | grilling、research、prototype、domain-modeling、writing-for-agents | **若已安装**才调用；doctor 只读探测，不自动下载 |
 
