@@ -102,8 +102,8 @@ def test_t2_ratio_below_min_n_is_null_and_rendered_as_insufficient(tmp_path):
 
 # [T3]
 @pytest.mark.parametrize("direction,baseline,current,verdict", [
-    ("down", 0.5, 0.3, "已改善"), ("down", 0.5, 0.5, "未改善"), ("down", 0.5, 0.7, "未改善"),
-    ("up", 0.5, 0.7, "已改善"), ("up", 0.5, 0.5, "未改善"), ("up", 0.5, 0.3, "未改善"),
+    ("down", 0.5, 0.3, "已改善"), ("down", 0.5, 0.5, "持平"), ("down", 0.5, 0.7, "未改善"),
+    ("up", 0.5, 0.7, "已改善"), ("up", 0.5, 0.5, "持平"), ("up", 0.5, 0.3, "未改善"),
 ])
 def test_t3_trial_verdict_both_directions(direction, baseline, current, verdict):
     t, errs = tw.validate_trial(trial(direction=direction))
@@ -366,3 +366,169 @@ def test_t13_skill_keeps_required_constraints():
     for needle in ("减法先行", "新增提案数不得超过删除数", "一次批量确认", "未勾选 = `unknown`", "不写 `rejected`",
                    "永不自动执行", "结论必须引用报告里的数字", "scripts/team_weekly.py"):
         assert needle in text, needle
+
+
+# ---------------------------------------------------------------------------
+# Review-fix tests
+# ---------------------------------------------------------------------------
+@pytest.mark.parametrize("metric,direction,value,deferred,advice", [
+    ("bypass_total", "down", 0, 0, "保留"),                      # tie at optimum 0
+    ("test_green_rate", "up", 1.0, 0, "保留"),                   # tie at optimum 1.0
+    ("first_green_index_median", "down", 1.0, 0, "保留"),        # tie at optimum 1
+    ("test_green_rate", "up", 0.5, 0, "人工判定"),               # tie, not optimum
+    ("install_failure_rate", "down", 0.2, 0, "人工判定"),
+    ("gate_deny:r1", "down", 0, 0, "人工判定"),                  # no optimum for gate_deny
+    ("test_green_rate", "up", 0.5, 1, "保留或撤掉（二选一，不可再延期）"),
+    ("bypass_total", "down", 0, 1, "保留"),
+    ("gate_deny:r1", "down", 3, 1, "保留或撤掉（二选一，不可再延期）"),
+])
+def test_tie_verdict_and_advice_by_optimum(metric, direction, value, deferred, advice):
+    t, errs = tw.validate_trial(trial(metric=metric, direction=direction, deferred=deferred))
+    assert not errs, errs
+    res = tw.judge_trial(t, {"value": value, "n": 30}, value, False)
+    assert res["verdict"] == "持平" and res["advice"] == advice
+
+
+def test_tie_is_not_listed_as_not_improved(tmp_path):
+    rows = green_runs(20, 10)  # green rate 0.5 == baseline 0.5
+    repo = make_repo(tmp_path, {"2026-10-20": rows}, trials=[trial()])
+    data = tw.build(repo, WEEK, 20)
+    assert data["trials_due"][0]["verdict"] == "持平"
+    assert data["subtraction"]["trials_not_improved"] == []
+
+
+def test_numeric_metrics_with_small_min_n():
+    rows = [
+        ev(1, "install", "2026-10-20T08:00:00Z", command="install", ok=False),
+        ev(2, "install", "2026-10-20T08:01:00Z", command="install", ok=True),
+        ev(3, "install", "2026-10-20T08:02:00Z", command="install", ok=True),
+        ev(4, "install", "2026-10-20T08:03:00Z", command="doctor", ok=False),  # not counted
+        # task 1: green on 3rd run; task 2: green on 1st run -> median 2.0
+        ev(10, "test_run", "2026-10-20T09:00:00Z", task=tk(1), green=False),
+        ev(11, "test_run", "2026-10-20T09:01:00Z", task=tk(1), green=False),
+        ev(12, "test_run", "2026-10-20T09:02:00Z", task=tk(1), green=True),
+        ev(13, "test_run", "2026-10-20T09:03:00Z", task=tk(2), green=True),
+        # snapshots: 2 tasks, task 1 has two snapshots (latest counts)
+        ev(20, "task_snapshot", "2026-10-20T10:00:00Z", task=tk(1), files_touched_repeatedly=1, commits_after_review=0),
+        ev(21, "task_snapshot", "2026-10-21T10:00:00Z", task=tk(1), files_touched_repeatedly=3, commits_after_review=2),
+        ev(22, "task_snapshot", "2026-10-21T10:00:00Z", task=tk(2), files_touched_repeatedly=1, commits_after_review=0),
+        ev(30, "correction", "2026-10-20T11:00:00Z", task=tk(1)),
+        ev(31, "correction", "2026-10-20T11:01:00Z", task=tk(1)),
+        ev(32, "correction", "2026-10-20T11:02:00Z", task=tk(2)),
+        ev(33, "correction", "2026-10-20T11:03:00Z", task=tk(2)),
+        ev(34, "correction", "2026-10-20T11:04:00Z", task=tk(2)),
+        ev(40, "lesson_recall", "2026-10-20T12:00:00Z", task=tk(1), card=CARD, level="hint"),
+        ev(41, "lesson_recall", "2026-10-20T12:01:00Z", task=tk(3), card=CARD, level="hint"),
+        ev(42, "correction", "2026-10-20T12:05:00Z", task=tk(1)),
+    ]
+    m = metrics_for(rows, min_n=2)
+    assert m["install_failure_rate"]["value"] == pytest.approx(1 / 3) and m["install_failure_rate"]["n"] == 3
+    assert m["test_green_rate"]["value"] == pytest.approx(0.5) and m["test_green_rate"]["n"] == 4
+    assert m["first_green_index_median"] == {"value": 2.0, "n": 2}
+    # 6 corrections / 3 snapshot rows (task-days)
+    assert m["corrections_per_task_day"]["value"] == pytest.approx(6 / 3)
+    assert m["rework_files_per_task"]["value"] == pytest.approx((3 + 1) / 2)
+    assert m["commits_after_review_per_task"]["value"] == pytest.approx(2 / 2)
+    assert m["card_corrections_ratio:" + CARD]["value"] == pytest.approx(1 / 2)
+    assert metrics_for(rows, min_n=5)["install_failure_rate"]["value"] is None
+
+
+def test_baseline_null_is_recomputed_from_week_before_registered_week():
+    # registered 2026-10-14 (W42) -> baseline week is W41 (2026-10-05..11), not W42
+    w41 = green_runs(10, 2, start=100, day="2026-10-07")   # 0.2
+    w42 = green_runs(10, 8, start=300, day="2026-10-14")   # 0.8, must not be used
+    w43 = green_runs(10, 6, start=500, day="2026-10-20")   # current 0.6
+    t, _ = tw.validate_trial(trial(registered="2026-10-14", baseline=None, review_date="2026-10-25"))
+    events = sane(w41 + w42 + w43)
+    cur = tw.compute_metrics(tw.in_window(events, *tw.week_bounds(WEEK)), 5)
+    res = tw.due_trials({"t1": t}, cur, events, "2026-10-25", 5)[0]
+    assert res["baseline"] == pytest.approx(0.2) and res["current"] == pytest.approx(0.6)
+    assert res["verdict"] == "已改善"
+
+
+def test_gate_deny_baseline_missing_key_is_zero_when_baseline_week_has_events():
+    # baseline week W41 has events but no deny of r1; current week has 2 denies
+    base_events = [ev(1, "bypass", "2026-10-07T10:00:00Z", kind="skip_tests")]
+    cur_events = _deny_rows("r1", 2)
+    t, _ = tw.validate_trial(trial(metric="gate_deny:r1", direction="down", registered="2026-10-14",
+                                   baseline=None, review_date="2026-10-25"))
+    events = sane(base_events + cur_events)
+    cur = tw.compute_metrics(tw.in_window(events, *tw.week_bounds(WEEK)), 5)
+    res = tw.due_trials({"t1": t}, cur, events, "2026-10-25", 5)[0]
+    assert res["baseline"] == 0 and res["current"] == 2 and res["verdict"] == "未改善"
+    # no events at all in the baseline week -> baseline stays unknown
+    events2 = sane(cur_events)
+    cur2 = tw.compute_metrics(tw.in_window(events2, *tw.week_bounds(WEEK)), 5)
+    assert tw.due_trials({"t1": t}, cur2, events2, "2026-10-25", 5)[0]["verdict"] == "样本不足"
+
+
+def test_review_date_after_week_end_is_not_due():
+    t, _ = tw.validate_trial(trial(review_date="2026-10-26"))
+    metrics = {"test_green_rate": {"value": 0.9, "n": 40}}
+    assert tw.due_trials({"t1": t}, metrics, [], "2026-10-25", 20) == []
+    t2, _ = tw.validate_trial(trial(review_date="2026-10-25"))
+    assert len(tw.due_trials({"t1": t2}, metrics, [], "2026-10-25", 20)) == 1
+
+
+def test_last_complete_week():
+    assert tw.last_complete_week(dt.datetime(2026, 10, 28, tzinfo=dt.timezone.utc)) == "2026-W43"
+    assert tw.last_complete_week(dt.datetime(2026, 10, 26, 0, 0, tzinfo=dt.timezone.utc)) == "2026-W43"
+    assert tw.last_complete_week(dt.datetime(2026, 10, 25, 23, 59, tzinfo=dt.timezone.utc)) == "2026-W42"
+    assert tw.last_complete_week(dt.datetime(2021, 1, 5, tzinfo=dt.timezone.utc)) == "2020-W53"
+
+
+@pytest.mark.parametrize("snapshot", [
+    {"week": "2026-W41", "min_n": 5, "metrics": {"test_green_rate": {"value": 0.99, "n": 99}}},   # other week
+    {"week": PREV, "min_n": 5, "metrics": {"test_green_rate": 0.99}},                              # value not a dict
+    {"week": PREV, "min_n": 5, "metrics": {"test_green_rate": {"n": 99}}},                         # no value key
+    {"week": PREV, "min_n": 5, "metrics": {"test_green_rate": {"value": 0.99, "n": 9}, "x": None}},  # one bad entry
+])
+def test_invalid_or_mismatched_snapshot_falls_back_to_recompute(tmp_path, snapshot):
+    repo = make_repo(tmp_path, {"2026-10-14": green_runs(10, 5, day="2026-10-14")})
+    (repo / "admin" / "weekly").mkdir(parents=True)
+    (repo / "admin" / "weekly" / f"{PREV}.json").write_text(json.dumps(snapshot), encoding="utf-8")
+    events = tw.agg.load_events(repo, "")
+    got = tw.load_prev_metrics(repo, PREV, events, 5)
+    assert got["test_green_rate"] == {"value": 0.5, "n": 10}
+
+
+def test_valid_snapshot_is_used(tmp_path):
+    repo = make_repo(tmp_path, {})
+    (repo / "admin" / "weekly").mkdir(parents=True)
+    snap = {"week": PREV, "min_n": 5, "metrics": {"test_green_rate": {"value": 0.99, "n": 99}}}
+    (repo / "admin" / "weekly" / f"{PREV}.json").write_text(json.dumps(snap), encoding="utf-8")
+    assert tw.load_prev_metrics(repo, PREV, [], 5) == snap["metrics"]
+
+
+def test_subtraction_candidates_carry_n_and_low_sample_tag(tmp_path):
+    rows = _deny_rows("r1", 5) + [
+        ev(2000 + i, "bypass", f"2026-10-20T10:{i + 10:02d}:00Z", task=tk(i + 1), kind="no_verify") for i in range(3)]
+    rows += _recalls(CARD, 5, 3)
+    repo = make_repo(tmp_path, {"2026-10-20": rows})
+    small = tw.build(repo, WEEK, 20)
+    sub = small["subtraction"]
+    assert sub["suspected_misblock"][0]["n"] == 5 and sub["suspected_misblock"][0]["low_n"] is True
+    assert sub["low_efficiency_cards"][0]["n"] == 5 and sub["low_efficiency_cards"][0]["low_n"] is True
+    md = tw.render_md(small)
+    assert md.count("n=5") >= 2 and tw.LOW_N_TAG in md
+    big = tw.build(repo, WEEK, 5)["subtraction"]
+    assert big["suspected_misblock"][0]["low_n"] is False and big["low_efficiency_cards"][0]["low_n"] is False
+
+
+def test_idle_card_uses_created_date_over_event_ts():
+    _, end = tw.week_bounds(WEEK)
+    card = lambda n, c, ts, **kw: ev(n, "lesson_card", ts, card=c, level="hint", scope_kind="global", status="active", **kw)
+    rows = sane([
+        card(1, CARD, "2026-10-20T00:00:00Z", created="2026-08-01"),    # exported recently but created long ago -> idle
+        card(2, CARD2, "2026-08-01T00:00:00Z", created="2026-10-10"),   # created inside 4 weeks -> skipped
+    ])
+    assert [r["card"] for r in tw.idle_cards(rows, end)] == [CARD]
+
+
+def test_markdown_cells_escape_pipes(tmp_path):
+    repo = make_repo(tmp_path, {"2026-10-20": green_runs(20, 20)},
+                     trials=[trial(title="a|b", undo="git revert x | y", baseline=0.5)])
+    md = tw.render_md(tw.build(repo, WEEK, 20))
+    row = next(ln for ln in md.splitlines() if ln.startswith("| t1 |"))
+    assert "a\\|b" in row and "git revert x \\| y" in row
+    assert tw._esc("a|b\nc") == "a\\|b c"

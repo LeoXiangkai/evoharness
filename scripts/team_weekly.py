@@ -36,6 +36,7 @@ DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 TS_FMT = "%Y-%m-%dT%H:%M:%SZ"
 NO_DATA = "无数据"
 LOW_N = "样本不足"
+LOW_N_TAG = "【低样本】"
 
 FIXED_KEYS = (
     "install_failure_rate", "test_green_rate", "first_green_index_median",
@@ -169,7 +170,8 @@ def load_prev_metrics(repo: Path, prev_week: str, events: list[dict], min_n: int
     try:
         data = json.loads(snap.read_text(encoding="utf-8"))
         if (isinstance(data, dict) and data.get("week") == prev_week and data.get("min_n") == min_n
-                and isinstance(data.get("metrics"), dict)):
+                and isinstance(data.get("metrics"), dict)
+                and all(isinstance(m, dict) and "value" in m for m in data["metrics"].values())):
             return data["metrics"]
     except (OSError, ValueError):
         pass
@@ -287,18 +289,37 @@ def sharing_problems(trials: dict[str, dict]) -> list[str]:
     return out
 
 
+def best_value(metric: str) -> float | None:
+    """Value a metric cannot improve past; None when the metric has no natural optimum."""
+    if metric.startswith("gate_deny:"):
+        return None
+    if metric == "test_green_rate":
+        return 1.0
+    if metric == "first_green_index_median":
+        return 1.0
+    return 0.0
+
+
 def judge_trial(trial: dict, current: dict | None, baseline: float | None, shared: bool) -> dict:
     cur = current.get("value") if current else None
+    at_best = False
     if shared:
         verdict = "不可单独归因"
     elif cur is None or baseline is None:
         verdict = LOW_N
+    elif math.isclose(cur, baseline, rel_tol=0, abs_tol=1e-9):
+        verdict = "持平"
+        best = best_value(trial["metric"])
+        at_best = best is not None and math.isclose(cur, best, rel_tol=0, abs_tol=1e-9)
     elif trial["direction"] == "down":
         verdict = "已改善" if cur < baseline else "未改善"
     else:
         verdict = "已改善" if cur > baseline else "未改善"
-    if trial["deferred"] == 1:
-        advice = "保留" if verdict == "已改善" else "撤掉" if verdict == "未改善" else "保留或撤掉（二选一，不可再延期）"
+    undecided = "保留或撤掉（二选一，不可再延期）"
+    if verdict == "持平":
+        advice = "保留" if at_best else undecided if trial["deferred"] == 1 else "人工判定"
+    elif trial["deferred"] == 1:
+        advice = "保留" if verdict == "已改善" else "撤掉" if verdict == "未改善" else undecided
     else:
         advice = {"已改善": "保留", "未改善": "撤掉"}.get(verdict, "可延期一次，或保留 / 撤掉")
     return {"id": trial["id"], "title": trial["title"], "metric": trial["metric"], "direction": trial["direction"],
@@ -316,8 +337,12 @@ def due_trials(trials: dict[str, dict], metrics: dict[str, dict], events: list[d
             continue
         baseline = t["baseline"]
         if baseline is None:
-            reg_start, reg_end = week_bounds(week_id(dt.date.fromisoformat(t["registered"])))
-            baseline = compute_metrics(in_window(events, reg_start, reg_end), min_n).get(t["metric"], {}).get("value")
+            reg_start, reg_end = week_bounds(shift_week(week_id(dt.date.fromisoformat(t["registered"])), -1))
+            base_metrics = compute_metrics(in_window(events, reg_start, reg_end), min_n)
+            baseline = base_metrics.get(t["metric"], {}).get("value")
+            if baseline is None and t["metric"] not in base_metrics and t["metric"].startswith("gate_deny:") \
+                    and base_metrics["bypass_total"]["value"] is not None:
+                baseline = 0  # no deny of that rule in a baseline week that has events
         shared = metric_users[t["metric"]] > 1 or bool(t["shared_metric_with"])
         current = metrics.get(t["metric"])
         if current is None and t["metric"].startswith("gate_deny:") and metrics["bypass_total"]["value"] is not None:
@@ -353,7 +378,7 @@ def suspected_misblocks(window: list[dict], all_events: list[dict]) -> list[dict
                 hit += 1
         ratio = hit / len(rows)
         if ratio >= MISBLOCK_RATIO:
-            out.append({"rule_tag": tag, "denies": len(rows), "followed_by_bypass": hit, "ratio": ratio})
+            out.append({"rule_tag": tag, "denies": len(rows), "n": len(rows), "followed_by_bypass": hit, "ratio": ratio})
     return out
 
 
@@ -363,7 +388,7 @@ def low_efficiency_cards(window: list[dict]) -> list[dict]:
         if row["recalls"] >= CARD_MIN_RECALLS:
             ratio = row["corrections_after_recall"] / row["recalls"]
             if ratio >= CARD_RATIO:
-                out.append({"card": card, "recalls": row["recalls"],
+                out.append({"card": card, "recalls": row["recalls"], "n": row["recalls"],
                             "corrections_after_recall": row["corrections_after_recall"], "ratio": ratio})
     return out
 
@@ -371,7 +396,8 @@ def low_efficiency_cards(window: list[dict]) -> list[dict]:
 def idle_cards(all_events: list[dict], end: dt.datetime) -> list[dict]:
     """Active cards (latest lesson_card event, whole history) with 0 recalls in the last 4 weeks.
 
-    Cards first seen inside the 4-week span are skipped: they have not had the full period to be recalled.
+    Cards created inside the 4-week span are skipped: they have not had the full period to be recalled.
+    Creation time = the lesson_card `created` date, falling back to the event ts when missing.
     """
     lo = _fmt_ts(end - dt.timedelta(weeks=IDLE_WEEKS))
     hi = _fmt_ts(end)
@@ -387,8 +413,9 @@ def idle_cards(all_events: list[dict], end: dt.datetime) -> list[dict]:
         if e["type"] == "lesson_card":
             if card not in latest or e["ts"] >= latest[card]["ts"]:
                 latest[card] = e
-            if card not in first_seen or e["ts"] < first_seen[card]:
-                first_seen[card] = e["ts"]
+            born = f"{e['created']}T00:00:00Z" if _is_date(e.get("created")) else e["ts"]
+            if card not in first_seen or born < first_seen[card]:
+                first_seen[card] = born
         elif e["type"] == "lesson_recall" and e["ts"] >= lo:
             recalled.add(card)
     return [{"card": c, "last_card_event": latest[c]["ts"]} for c in sorted(latest)
@@ -442,6 +469,10 @@ def build(repo: Path, week: str, min_n: int) -> dict:
     problems += sharing_problems(trials)
     week_end_date = (end - dt.timedelta(days=1)).date().isoformat()
     due = due_trials(trials, metrics, events, week_end_date, min_n)
+    misblocks = suspected_misblocks(window, events)
+    low_cards = low_efficiency_cards(window)
+    for r in misblocks + low_cards:
+        r["low_n"] = r["n"] < min_n
     return {
         "week": week, "prev_week": prev_week, "min_n": min_n,
         "window": {"start": _fmt_ts(start), "end": _fmt_ts(end)},
@@ -449,14 +480,18 @@ def build(repo: Path, week: str, min_n: int) -> dict:
         "metrics": metrics, "metrics_prev": prev_metrics,
         "trials_due": due,
         "subtraction": {
-            "suspected_misblock": suspected_misblocks(window, events),
-            "low_efficiency_cards": low_efficiency_cards(window),
+            "suspected_misblock": misblocks,
+            "low_efficiency_cards": low_cards,
             "idle_cards": idle_cards(events, end),
             "trials_not_improved": [d["id"] for d in due if d["verdict"] == "未改善"],
         },
         "stages": stage_table(metrics, window),
         "trial_problems": problems,
     }
+
+
+def _esc(text) -> str:
+    return str(text).replace("|", "\\|").replace("\r", " ").replace("\n", " ")
 
 
 def _fmt(value) -> str:
@@ -492,13 +527,13 @@ def render_md(data: dict) -> str:
     keys = list(FIXED_KEYS) + sorted((set(data["metrics"]) | set(data["metrics_prev"])) - set(FIXED_KEYS))
     for key in keys:
         cur, prev = data["metrics"].get(key), data["metrics_prev"].get(key)
-        L.append(f"| {key} | {_val(cur)} | {_val(prev)} | {_change(cur, prev)} | {metric_direction_note(key)} |")
+        L.append(f"| {_esc(key)} | {_val(cur)} | {_val(prev)} | {_change(cur, prev)} | {metric_direction_note(key)} |")
     L += ["", "## 3. 到期在试项", ""]
     if data["trials_due"]:
         L += ["| id | 机制 | 指标 | 方向 | 基线 | 当前 | 判定 | 建议 | undo |", "|---|---|---|---|---|---|---|---|---|"]
         for d in data["trials_due"]:
-            L.append(f"| {d['id']} | {d['title']} | {d['metric']} | {d['direction']} | {_fmt(d['baseline'])} | "
-                     f"{_fmt(d['current'])} | {d['verdict']} | {d['advice']} | {d['undo']} |")
+            L.append(f"| {_esc(d['id'])} | {_esc(d['title'])} | {_esc(d['metric'])} | {d['direction']} | "
+                     f"{_fmt(d['baseline'])} | {_fmt(d['current'])} | {d['verdict']} | {d['advice']} | {_esc(d['undo'])} |")
     else:
         L.append("本周无")
     sub = data["subtraction"]
@@ -506,10 +541,10 @@ def render_md(data: dict) -> str:
     lines = []
     for r in sub["suspected_misblock"]:
         lines.append(f"- 疑似误拦（相关性提示，非因果）：{r['rule_tag']} deny {r['denies']} 次，其中 {r['followed_by_bypass']} 次"
-                     f"在 30 分钟内同 user+task 出现 bypass（占比 {r['ratio']:.2f}）")
+                     f"在 30 分钟内同 user+task 出现 bypass（占比 {r['ratio']:.2f}，n={r['n']}）{LOW_N_TAG if r['low_n'] else ''}")
     for r in sub["low_efficiency_cards"]:
         lines.append(f"- 低效经验卡（建议改写）：{r['card']} recalls={r['recalls']}，"
-                     f"recall 后纠正 {r['corrections_after_recall']}（比率 {r['ratio']:.2f}）")
+                     f"recall 后纠正 {r['corrections_after_recall']}（比率 {r['ratio']:.2f}，n={r['n']}）{LOW_N_TAG if r['low_n'] else ''}")
     for r in sub["idle_cards"]:
         lines.append(f"- 闲置经验卡（建议归档）：{r['card']} 最近 {IDLE_WEEKS} 周 0 次 recall，最新卡片事件 {r['last_card_event']}")
     for i in sub["trials_not_improved"]:
@@ -517,7 +552,7 @@ def render_md(data: dict) -> str:
     L += lines or ["本周无"]
     L += ["", "## 5. 流程四段表", "", "| 阶段 | 取数 |", "|---|---|"]
     for row in data["stages"]:
-        L.append(f"| {row['stage']} | {'；'.join(row['cells'])} |")
+        L.append(f"| {row['stage']} | {_esc('；'.join(row['cells']))} |")
     L += ["", "## 6. 在试台账问题", ""]
     L += [f"- {p}" for p in data["trial_problems"]] or ["本周无"]
     L.append("")
