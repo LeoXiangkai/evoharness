@@ -107,6 +107,15 @@ def main() -> int:
             marker.write_text(datetime.now(timezone.utc).isoformat(), encoding="utf-8")
         except OSError:
             pass
+        if (claude_dir() / "aicj" / "team.json").is_file():  # raw recall row for team telemetry
+            try:
+                recalls = claude_dir() / "aicj" / "lessons" / "recalls.jsonl"
+                row = {"ts": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"), "card": cid,
+                       "level": str(card.get("level", "")), "session_id": session, "cwd": cwd}
+                with recalls.open("a", encoding="utf-8") as fh:
+                    fh.write(json.dumps(row, ensure_ascii=False) + "\n")
+            except OSError:
+                pass
         lesson = str(card.get("lesson", "")).strip()
         line = f"[lesson:{cid}] {lesson}"
         if card.get("level") == "block":

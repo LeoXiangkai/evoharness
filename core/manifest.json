@@ -164,12 +164,28 @@
       {
         "source": "hooks/hook_mode.py",
         "target": "hooks/aicj/hook_mode.py"
+      },
+      {
+        "source": "hooks/aicj_telemetry.py",
+        "target": "hooks/aicj/aicj_telemetry.py"
+      },
+      {
+        "source": "hooks/telemetry-capture.py",
+        "target": "hooks/aicj/telemetry-capture.py"
+      },
+      {
+        "source": "hooks/telemetry-report.py",
+        "target": "hooks/aicj/telemetry-report.py"
       }
     ],
     "bin": [
       {
         "source": "bin/git-safe",
         "target": "bin/git-safe"
+      },
+      {
+        "source": "bin/aicj-telemetry",
+        "target": "bin/aicj-telemetry"
       }
     ],
     "templates": [
@@ -195,6 +211,30 @@
       "script": "hooks/aicj/git-safe-rewrite.py",
       "blocking": false,
       "optional": true
+    },
+    {
+      "event": "PreToolUse",
+      "matcher": "Bash",
+      "script": "hooks/aicj/telemetry-capture.py",
+      "blocking": false
+    },
+    {
+      "event": "PostToolUse",
+      "matcher": "Bash",
+      "script": "hooks/aicj/telemetry-capture.py",
+      "blocking": false
+    },
+    {
+      "event": "PostToolUseFailure",
+      "matcher": "Bash",
+      "script": "hooks/aicj/telemetry-capture.py",
+      "blocking": false
+    },
+    {
+      "event": "SessionStart",
+      "matcher": "",
+      "script": "hooks/aicj/telemetry-report.py",
+      "blocking": false
     }
   ]
 }

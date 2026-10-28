@@ -25,6 +25,7 @@ class Options:
     project: str = ""
     enable_hooks: list[str] = field(default_factory=list)
     no_hud: bool = False
+    team_config: str = ""  # install-time input only; never persisted
 
 
 @dataclass
@@ -87,7 +88,7 @@ class Manifest:
             "state": self.state,
             "source": {"repo": self.source_repo, "commit": self.source_commit},
             "installed_at": self.installed_at,
-            "options": asdict(self.options),
+            "options": {k: v for k, v in asdict(self.options).items() if k != "team_config"},
             "entries": [asdict(entry) for entry in self.entries],
             "settings_hooks": list(self.settings_hooks),
             "created_dirs": list(self.created_dirs),

@@ -10,7 +10,7 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import conflict, hud, index, manifest, mdblock, settings
+from . import conflict, hud, index, manifest, mdblock, settings, telemetry
 from .util import (
     UserError,
     atomic_write,
@@ -27,6 +27,7 @@ from .util import (
 GLOBAL_REF = "aicj/CLAUDE.global.md"
 CLAUDE_MD = ".claude/CLAUDE.md"
 SETTINGS = ".claude/settings.json"
+TEAM_REL = telemetry.TEAM_REL
 CODEX_HOOKS = ".codex/hooks.json"
 CODEX_SKILLS = ".agents/skills"
 HOOK_PATH_MARK = settings.HOOK_PATH_MARK
@@ -593,6 +594,12 @@ def _merge_hook_file(
     return entry
 
 
+def _emit_failure(home: Path, source: Path | None, command: str, exc: BaseException,
+                  dry_run: bool, options=None) -> None:
+    if not dry_run:
+        telemetry.emit_install(home, source, command, False, error_kind=type(exc).__name__, options=options)
+
+
 def run_install(
     home: Path,
     source: Path,
@@ -602,9 +609,14 @@ def run_install(
     try:
         return _run_install(home, source, options, dry_run)
     except UnicodeError as exc:
+        _emit_failure(home, source, "install", exc, dry_run, options)
         raise UserError(f"install aborted: undecodable text: {exc}") from exc
     except OSError as exc:
+        _emit_failure(home, source, "install", exc, dry_run, options)
         raise UserError(f"install aborted: {exc}; rerun after fixing it (progress is recorded, uninstall still works)") from exc
+    except Exception as exc:
+        _emit_failure(home, source, "install", exc, dry_run, options)
+        raise
 
 
 def _run_install(
@@ -639,6 +651,12 @@ def _run_install(
     claude_text = _read_text(claude_path) if claude_path.exists() else ""
     block_span = mdblock.find_block(claude_text)
 
+    team_bytes: bytes | None = None
+    if options.team_config.strip():
+        team_bytes = telemetry.fetch_team_config(options.team_config)
+    elif TEAM_REL in previous:
+        team_bytes = telemetry.existing_team_bytes(home)
+
     # 2. plan (pure)
     ts = timestamp()
     file_ops, skills = _plan_files(idx.files, home, options, ts, report, previous)
@@ -650,6 +668,8 @@ def _run_install(
     executor_mode = "worker" if any(str(name).strip().casefold() == "executor" for name in options.adapters) else "cc"
     config = json.dumps({"hook_mode": mode, "executor_mode": executor_mode}, ensure_ascii=False, separators=(",", ":")) + "\n"
     generated_ops.append(_plan_generated(config_rel, config.encode("utf-8"), home, options, previous, ts, report))
+    if team_bytes is not None:
+        generated_ops.append(_plan_generated(TEAM_REL, team_bytes, home, options, previous, ts, report))
     if is_windows():
         for op in file_ops:
             if isinstance(op, FilePlan) and op.entry.path.startswith(".claude/bin/") and op.decision != conflict.SKIPPED:
@@ -669,6 +689,8 @@ def _run_install(
         if hook.optional and hook.name not in options.enable_hooks:
             report.note(f"可选钩子未启用：{hook.name}（用 --enable-hook 开启）")
             continue
+        if team_bytes is None and Path(hook.script).name.startswith("telemetry-"):
+            continue  # no team config: telemetry leaves no footprint in settings
         command, args = hook_command(hook, home, options.strict)
         script_entry = planned.get(hook_script_target(hook))
         if script_entry is None or script_entry.action not in HOOK_READY_ACTIONS:
@@ -758,6 +780,7 @@ def _run_install(
                 journal.hooks.pop(rel)
         journal.flush(manifest.COMPLETE, ordered)
         report.add("manifest", manifest.REL_PATH)
+        telemetry.emit_install(home, source, "install", True, options=options)
     return report, result
 
 
@@ -932,9 +955,14 @@ def run_uninstall(home: Path, dry_run: bool) -> Report:
     try:
         return _run_uninstall(home, dry_run)
     except UnicodeError as exc:
+        _emit_failure(home, None, "uninstall", exc, dry_run)
         raise UserError(f"uninstall aborted: undecodable text: {exc}") from exc
     except OSError as exc:
+        _emit_failure(home, None, "uninstall", exc, dry_run)
         raise UserError(f"uninstall aborted: {exc}") from exc
+    except Exception as exc:
+        _emit_failure(home, None, "uninstall", exc, dry_run)
+        raise
 
 
 def _run_uninstall(home: Path, dry_run: bool) -> Report:
@@ -964,6 +992,9 @@ def _run_uninstall(home: Path, dry_run: bool) -> Report:
     for target in hook_keys:
         if (home / target).exists():
             settings.load(home / target)
+
+    if not dry_run:
+        telemetry.uninstall_report(home, None)  # after validation, before the library and team.json are removed
 
     gone: set[Path] = set()
     kept_dirs: set[Path] = set()

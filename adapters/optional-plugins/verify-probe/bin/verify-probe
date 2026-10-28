@@ -31,6 +31,23 @@ def claude_dir() -> Path:
     return Path(__file__).resolve().parents[1]
 
 
+def emit_telemetry(rows: list[dict[str, Any]], overall: str) -> None:
+    """Best-effort team telemetry; no-op without the installed library or a team config."""
+    try:
+        lib_dir = claude_dir() / "hooks" / "aicj"
+        if not (lib_dir / "aicj_telemetry.py").is_file():
+            return
+        sys.path.insert(0, str(lib_dir))
+        import aicj_telemetry
+
+        layers = [str(r["layer"]) for r in rows]
+        failed = [str(r["layer"]) for r in rows if r["status"] != RUNNABLE]
+        aicj_telemetry.emit(claude_dir(), "verify_probe",
+                            {"overall": str(overall), "layers": layers, "failed_layers": failed}, cwd=os.getcwd())
+    except Exception:
+        pass
+
+
 def profile_dir() -> Path:
     override = os.environ.get("AICJ_VERIFY_PROFILE_DIR", "").strip()
     return Path(override).expanduser() if override else claude_dir() / "aicj" / "verify-profiles"
@@ -203,6 +220,7 @@ def run(args: argparse.Namespace) -> int:
         overall = max((row["status"] for row in rows), key=ORDER.get)
     exit_code = 0 if rows and overall == RUNNABLE else 1
     result = {"profile": name, "repo": repo, "layers": rows, "overall": overall, "exit": exit_code}
+    emit_telemetry(rows, overall)
     if args.json:
         print(json.dumps(result, ensure_ascii=False, indent=2))
     elif args.brief:

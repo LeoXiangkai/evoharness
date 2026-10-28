@@ -160,3 +160,7 @@ CLAUDE.md 标记块：BEGIN、END 各恰好出现一次且顺序正确才是合�
 ## 6. 不迁移清单
 
 规则治理与事故档案、大文件下载与代理、`/loop` 约束、飞书/TAP/Obsidian/配额切换、e2e 台账钩子、个人遥测与 `permissions`、教训数据文件、`verify-profiles` 实例、第三方插件资产。
+
+## 7. 团队遥测
+
+可选的团队采集（`install --team-config`）契约见 `docs/team-telemetry-design.md`，不属于本文冻结范围。

@@ -132,6 +132,10 @@ py -3 installer/aicj.py selftest
 
 参数适用命令以对应 `--help` 为准。
 
+## 团队安装
+
+加入团队采集（可选，默认不采集）：`python3 installer/aicj.py install --team-config <URL|file://|路径>`（Windows：`install.ps1 -TeamConfig`）。只上传枚举/计数/哈希，不含源码、提示词或命令原文。字段见 `docs/telemetry-fields.md`，管理员操作见 `docs/team-telemetry-admin.md`，契约见 `docs/team-telemetry-design.md`。
+
 ## 不破坏用户内容的约定
 
 - 已有文件 sha256 相同则 `adopted`，不写；内容不同默认 `skipped`。同源软链记为 `adopted-symlink`。

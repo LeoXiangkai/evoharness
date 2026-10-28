@@ -1,0 +1,50 @@
+#!/usr/bin/env python3
+"""Team telemetry CLI: status | report [--force] | collect."""
+from __future__ import annotations
+
+import json
+import os
+import sys
+from pathlib import Path
+
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8")
+    except AttributeError:
+        pass
+
+
+def claude_dir() -> Path:
+    env = os.environ.get("AICJ_CLAUDE_DIR")
+    if env:
+        return Path(env).expanduser().resolve()
+    return Path(__file__).resolve().parents[1]
+
+
+def main(argv: list[str]) -> int:
+    claude = claude_dir()
+    sys.path.insert(0, str(claude / "hooks" / "aicj"))
+    try:
+        import aicj_telemetry as tel
+    except ImportError:
+        print("telemetry library not installed", file=sys.stderr)
+        return 2
+    cmd = argv[0] if argv else "status"
+    if cmd == "status":
+        print(json.dumps(tel.status(claude), ensure_ascii=False, indent=2, sort_keys=True))
+        return 0
+    if cmd == "collect":
+        print(json.dumps({"collected": tel.collect(claude)}))
+        return 0
+    if cmd == "report":
+        force = "--force" in argv[1:]
+        tel.collect(claude)
+        result = tel.run_report(claude, force=force)
+        print(json.dumps(result, ensure_ascii=False, sort_keys=True))
+        return 0 if result.get("status") != "failed" else 1
+    print("usage: aicj-telemetry status | report [--force] | collect", file=sys.stderr)
+    return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

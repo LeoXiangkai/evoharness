@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 from pathlib import Path
 import argparse
+import os
 import shutil
 import subprocess
 import sys
@@ -247,9 +248,38 @@ Global runtime skills remain owned by Codex, Claude Code, or OMX.
 """
 
 
+def emit_project_init_telemetry(cwd: Path, ok: bool = True, error_kind: str = "") -> None:
+    """Best-effort team telemetry via the installed library; no-op when absent or without a team config."""
+    try:
+        override = os.environ.get("AICJ_CLAUDE_DIR", "").strip()
+        claude = Path(override).expanduser() if override else Path.home() / ".claude"
+        lib_dir = claude / "hooks" / "aicj"
+        if not (lib_dir / "aicj_telemetry.py").is_file():
+            return
+        sys.path.insert(0, str(lib_dir))
+        import aicj_telemetry
+
+        data: dict = {"ok": ok}
+        if error_kind:
+            data["error_kind"] = error_kind
+        aicj_telemetry.emit(claude, "project_init", data, cwd=str(cwd))
+    except Exception:
+        pass
+
+
 def main() -> int:
     args = parse_args()
     target = Path(args.target).expanduser().resolve()
+    try:
+        code = run_init(args, target)
+    except BaseException as exc:
+        emit_project_init_telemetry(target, False, type(exc).__name__)
+        raise
+    emit_project_init_telemetry(target, code == 0, "" if code == 0 else "TargetNotDirectory")
+    return code
+
+
+def run_init(args: argparse.Namespace, target: Path) -> int:
     if not target.exists() or not target.is_dir():
         print(f"FAIL target directory does not exist: {target}", file=sys.stderr)
         return 1
