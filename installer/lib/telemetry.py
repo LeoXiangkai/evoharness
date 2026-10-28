@@ -155,6 +155,34 @@ def emit_install(home: Path, source: Path | None, command: str, ok: bool, *,
         return
 
 
+def _run_killing_tree(cmd: list[str], env: dict, timeout: int) -> None:
+    """Run cmd in its own process group/session; on timeout kill the whole tree (git grandchildren included)."""
+    kwargs: dict = {}
+    if os.name == "nt":
+        kwargs["creationflags"] = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+    else:
+        kwargs["start_new_session"] = True
+    proc = subprocess.Popen(cmd, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                            stderr=subprocess.DEVNULL, **kwargs)
+    try:
+        proc.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        try:
+            if os.name == "nt":
+                subprocess.run(["taskkill", "/T", "/F", "/PID", str(proc.pid)], capture_output=True,
+                               timeout=10, stdin=subprocess.DEVNULL)
+            else:
+                import signal
+                os.killpg(proc.pid, signal.SIGKILL)
+        except Exception:
+            pass
+        try:
+            proc.kill()
+            proc.wait(timeout=10)
+        except Exception:
+            pass
+
+
 def uninstall_report(home: Path, source: Path | None, timeout: int = 60) -> None:
     """Emit install(command=uninstall) and flush with a hard external timeout."""
     try:
@@ -167,9 +195,7 @@ def uninstall_report(home: Path, source: Path | None, timeout: int = 60) -> None
             return
         env_claude = str(home / ".claude")
         env = dict(os.environ, AICJ_CLAUDE_DIR=env_claude)
-        subprocess.run([sys.executable, str(script), "report", "--force"], env=env, timeout=timeout,
-                       stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                       check=False)
+        _run_killing_tree([sys.executable, str(script), "report", "--force"], env, timeout)
     except Exception:
         return
 

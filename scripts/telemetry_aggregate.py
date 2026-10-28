@@ -25,7 +25,7 @@ DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 FAMILIES = {
     "install": ("install", "project_init"),
     "hook": ("hook_gate", "bypass"),
-    "task": ("task_snapshot",),
+    "task_days": ("task_snapshot",),  # one snapshot per task per day: counts task-days, not tasks
     "rework": ("test_run", "review"),
     "lesson": ("lesson_card", "lesson_recall", "correction"),
 }

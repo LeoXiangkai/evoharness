@@ -36,3 +36,10 @@ Values are tokens (`[A-Za-z0-9._:+-]{1,64}`), hashes (`[0-9a-f]{8,64}`), ints, b
 | lesson_recall | card, level (hint, warn, block) |
 
 Aggregate output (`scripts/telemetry_aggregate.py`) derives, without adding event fields: hook gate counts by mode, test passed/failed/skipped sums, lesson recalls, By task (test runs, first green index) and By lesson card (recalls, corrections after first recall; best-effort by task hash and ts).
+
+## Notes on test_run and token fields
+
+- `test_run` without a parseable summary (Gradle success, `mvn -q`) carries only `framework` and `green`; count fields are omitted and aggregate as 0.
+- `go test` without `-v` counts packages (ok/FAIL lines), not test cases.
+- `verify_probe.layers` / `failed_layers` and `hook_gate.rule_tag` are matched against a closed vocabulary (`KNOWN_LAYERS`, `KNOWN_RULE_TAGS` in `aicj_telemetry.py`, taken from verify-probe `LAYER_SPECS` and the `[tag]` prefixes of push-review-gate / git-safe). Any other value is replaced by `x-` + the first 10 hex of sha256(salt+value).
+- Phone numbers are redacted including `+86` / `86` prefixed forms. Credential patterns include AIza keys, `glpat-`, Stripe `sk_`/`rk_` live/test keys and `xox[abprs]-` tokens.

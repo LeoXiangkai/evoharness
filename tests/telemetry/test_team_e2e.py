@@ -15,7 +15,7 @@ from .conftest import REPO_ROOT as REPO, git, make_remote, remote_files, write_l
 AICJ = REPO / "installer" / "aicj.py"
 AGG = REPO / "scripts" / "telemetry_aggregate.py"
 DAY = "2026-10-27"
-FAMILIES = ("install", "hook", "task", "rework", "lesson")
+FAMILIES = ("install", "hook", "task_days", "rework", "lesson")
 CAPTURE = "telemetry-capture.py"
 
 
@@ -187,7 +187,7 @@ def test_team_flow_end_to_end(tmp_path):
     clone = _collect_clone(tmp_path, remote)
     data = _agg(clone, "json")
     n_install = types["install"]
-    totals = {"install": n_install, "hook": 2, "task": 1, "rework": 4, "lesson": 3}
+    totals = {"install": n_install, "hook": 2, "task_days": 1, "rework": 4, "lesson": 3}
     assert data["summary"]["events"] == sum(types.values())
     for fam in FAMILIES:
         assert sum(d["families"][fam] for d in data["by_day"].values()) == totals[fam], fam

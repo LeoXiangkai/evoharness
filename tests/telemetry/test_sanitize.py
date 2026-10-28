@@ -23,7 +23,7 @@ def base(etype, **kw):
 
 def test_valid_event_passes_and_drops_unknown_keys():
     out = tel.sanitize(base("hook_gate", hook="pre_bash", event="deny", mode="warn",
-                            rule_tag="git", extra_key="x", cmd="rm -rf /"))
+                            rule_tag="git-safe", extra_key="x", cmd="rm -rf /"))
     assert out["hook"] == "pre_bash" and out["event"] == "deny"
     assert "extra_key" not in out and "cmd" not in out
 
@@ -99,3 +99,38 @@ def test_user_hash_containing_mobile_digits_is_kept_but_free_form_user_rejected(
     assert anon is not None and anon["user"] == "anon-" + hashed
     for bad in ("u1", digits, "ABCDEF0123456789", "anon-xyz", "cd" * 9, hashed + "\n"):
         assert tel.sanitize(base("correction", user=bad)) is None
+
+
+def _scrubbed(**kw):
+    return json.dumps(tel.sanitize(base("hook_gate", hook="h", event="deny", mode="warn", **kw)))
+
+
+def test_phone_with_country_code_is_redacted():
+    digits = "138" + "1234" + "5678"
+    for p in ("+86" + digits, "86" + digits, "+86 " + digits, "+86-" + digits):
+        out = _scrubbed(tool="t" + p)
+        assert digits not in out and "1234" not in out, p
+
+
+def test_more_credential_formats_are_redacted():
+    secrets = ["AIza" + "SyA1234567890abcdefghij", "glpat-" + "abcdefgh1234", "sk_" + "live_abcdefgh1234",
+               "sk_" + "test_abcdefgh1234", "rk_" + "live_abcdefgh1234", "xoxb" + "-12345678-abcdef",
+               "xoxp" + "-12345678-abcdef"]
+    for s in secrets:
+        out = _scrubbed(tool="v" + s)
+        assert s[6:] not in out, s
+
+
+def test_unknown_layer_and_rule_tag_are_hashed_known_pass(claude, team):
+    ident = {"user": "cd" * 8, "install": "ab" * 4}
+    odd = "ali" + "ce"
+    ev = {"hook": "h", "event": "deny", "mode": "warn"}
+    rt = tel._build(team, ident, "hook_gate", {**ev, "rule_tag": odd}, TS, "ef" * 8, None, None)
+    assert rt["rule_tag"].startswith("x-") and odd not in json.dumps(rt)
+    ok = tel._build(team, ident, "hook_gate", {**ev, "rule_tag": "push-review-gate"}, TS, "ef" * 8, None, None)
+    assert ok["rule_tag"] == "push-review-gate"
+    bob = "bo" + "bby"
+    vp = tel._build(team, ident, "verify_probe", {"overall": "ok", "layers": ["e2e", bob], "failed_layers": [bob]},
+                    TS, "ef" * 8, None, None)
+    assert vp["layers"][0] == "e2e" and vp["layers"][1].startswith("x-")
+    assert vp["failed_layers"][0] == vp["layers"][1] and bob not in json.dumps(vp)

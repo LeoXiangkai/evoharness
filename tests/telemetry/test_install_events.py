@@ -100,3 +100,29 @@ def test_existing_team_bytes_validates(tmp_path):
     assert inst_tel.existing_team_bytes(tmp_path) is None
     (p / "team.json").write_bytes(_team())
     assert inst_tel.existing_team_bytes(tmp_path) is not None
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX process-group kill; Windows uses taskkill /T")
+def test_uninstall_timeout_kills_grandchildren(tmp_path):
+    home = tmp_path / "home"
+    (home / ".claude" / "aicj").mkdir(parents=True)
+    (home / ".claude" / "bin").mkdir(parents=True)
+    (home / ".claude" / "hooks" / "aicj").mkdir(parents=True)
+    (home / ".claude" / "aicj" / "team.json").write_text("{}", encoding="utf-8")
+    (home / ".claude" / inst_tel.LIB_REL).write_text("", encoding="utf-8")
+    pidfile = tmp_path / "gc.pid"
+    (home / ".claude" / "bin" / "aicj-telemetry").write_text(
+        "import subprocess, sys, time\n"
+        f"p = subprocess.Popen(['sleep', '30'])\nopen({str(pidfile)!r}, 'w').write(str(p.pid))\ntime.sleep(30)\n",
+        encoding="utf-8")
+    inst_tel.uninstall_report(home, None, timeout=2)
+    pid = int(pidfile.read_text())
+    import time
+    for _ in range(20):
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return
+        time.sleep(0.2)
+    os.kill(pid, 9)
+    pytest.fail("grandchild survived uninstall timeout")

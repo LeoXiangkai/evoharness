@@ -150,6 +150,28 @@ def is_test_command(command: str) -> bool:
     return any(_is_test_segment(_command_of(seg)[1]) for seg in _SEGMENT_SPLIT.split(command))
 
 
+def test_framework(command: str) -> str:
+    """Framework name of the first test segment in the command ("" if none)."""
+    for seg in _SEGMENT_SPLIT.split(command):
+        cmd = _command_of(seg)[1]
+        if not _is_test_segment(cmd):
+            continue
+        name = Path(cmd[0].replace("\\", "/")).name.lower()
+        if name.startswith(("pytest", "py")) or name.startswith("python"):
+            return "pytest"
+        if name in ("mvn", "mvnw"):
+            return "maven"
+        if name in ("gradle", "gradlew"):
+            return "gradle"
+        if name == "go":
+            return "go"
+        return "jest"  # jest / vitest / npm|pnpm|yarn test
+    return ""
+
+
+_BUILD_FAILED = re.compile(r"BUILD (?:FAILED|FAILURE)")
+
+
 # ---------------------------------------------------------------- test summaries
 _PYTEST_LINE = re.compile(
     r"^[= ]*((?:\d+ (?:passed|failed|skipped|errors?|xfailed|xpassed|deselected|warnings?)(?:, | and )?)+)"
@@ -302,7 +324,13 @@ def main() -> None:
         for kind in bypass_kinds(command):
             tel.emit(claude, "bypass", {"kind": kind}, cwd=cwd)
     elif event in ("PostToolUse", "PostToolUseFailure"):
-        row = parse_test_summary(_response_text(payload)) if is_test_command(command) else None
+        row = None
+        if is_test_command(command):
+            text = _response_text(payload)
+            row = parse_test_summary(text)
+            if not row:  # quiet runs (gradle success, mvn -q): only framework + green are known
+                row = {"framework": test_framework(command) or "unknown",
+                       "green": event == "PostToolUse" and not _BUILD_FAILED.search(text)}
         if row:
             sid, tuid = payload.get("session_id"), payload.get("tool_use_id")
             event_id = None

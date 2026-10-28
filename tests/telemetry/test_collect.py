@@ -12,7 +12,7 @@ LES = "aicj/lessons"
 
 def _gate_rows(cwd):
     return [{"ts": "2026-10-27T10:00:00.123456+00:00", "hook": "pre-bash", "event": "deny",
-             "rule": "[git] never skip hooks", "tool": "Bash", "cmd": "git commit --no-verify -m secret",
+             "rule": "[git-safe] never skip hooks", "tool": "Bash", "cmd": "git commit --no-verify -m secret",
              "session_id": "s1", "cwd": cwd}]
 
 
@@ -45,7 +45,7 @@ def test_collect_real_formats_and_idempotent(claude, team, tmp_path):
     for bad in ("no-verify", "secret", "you are wrong", str(repo), "never skip hooks"):
         assert bad not in blob
     gate = next(e for e in evs if e["type"] == "hook_gate")
-    assert gate["ts"] == "2026-10-27T10:00:00Z" and gate["mode"] == "unknown" and gate["rule_tag"] == "git"
+    assert gate["ts"] == "2026-10-27T10:00:00Z" and gate["mode"] == "unknown" and gate["rule_tag"] == "git-safe"
     scope = next(e for e in evs if e["type"] == "review" and e["kind"] == "scope")
     assert scope["file_count"] == 2 and scope["changed_lines"] == 40 and scope["risk_signals"] == ["new_api"]
     outcome = next(e for e in evs if e["type"] == "review" and e["kind"] == "outcome")
