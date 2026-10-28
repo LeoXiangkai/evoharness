@@ -23,7 +23,7 @@ Changed files: `core/hooks/aicj_telemetry.py`, `core/hooks/telemetry-capture.py`
 
 ## Verification
 
-- command: `python3 -m pytest tests -q -p no:cacheprovider` — result: passed, 738 passed, 0 skipped
+- command: `python3 -m pytest tests -q -p no:cacheprovider` — result: passed, 741 passed, 0 skipped
 - command: `python3 scripts/sanitize_check.py` — result: ok, exit 0
 - command: `python3 scripts/template_integrity_check.py` — result: ok, exit 0
 - command: `python3 scripts/context_budget_check.py` (main checkout) — result: ok, exit 0
@@ -36,7 +36,7 @@ Changed files: `core/hooks/aicj_telemetry.py`, `core/hooks/telemetry-capture.py`
 
 - P0: none
 - P1: none
-- P2: independent reviewer not dispatched (user asked to stop using subagents); main-session diff self-review only
+- P2: one scoped independent review (12 candidates); fixed: idle skills listed before 4 weeks of data exist, pre-rollout corrections without a cause counted as G (could fire the G alert), telemetry import on every plain prompt, hook exit code only checked in-process; kept as judgment calls: adapter skills in the idle list, hash-token helper reuse, report overwrite (repo convention)
 - P2: known risk — skill-log pruning during collect can drop a skill-log row appended by a hook at the same
   moment (local association data only; worst case one missing `after_skill`)
 
