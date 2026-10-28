@@ -21,7 +21,7 @@ Members join with `aicj install --team-config <URL|file://|path>` (Windows: `ins
 git clone -b main <collect repo> collect && python3 scripts/telemetry_aggregate.py --repo collect --since 2026-10-01 --format md
 ```
 
-Output: totals, plus tables by day and by user hash for the families install, hook, task, rework and lesson. `--format json` gives the same data. Rows are re-validated and de-duplicated by event_id across all files (the same event can appear in two `<user>-<install>.jsonl` files after a local reset); raw events are never printed.
+Output: totals, plus tables by day and by user hash for the families install, hook, task_days, rework and lesson. `--format json` gives the same data. Rows are re-validated and de-duplicated by event_id across all files (the same event can appear in two `<user>-<install>.jsonl` files after a local reset); raw events are never printed.
 
 Per-user detail counters: hook gates split by event and by mode (`gate_mode_warn|block|unknown`), test runs with `tests_passed|failed|skipped` sums, and `lesson_recalls` (shown separately from lesson cards).
 - By task: per task hash, `test_runs` and `first_green_index` (1-based, ordered by ts; `-` if never green).

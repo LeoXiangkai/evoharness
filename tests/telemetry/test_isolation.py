@@ -185,3 +185,36 @@ def test_git_env_allowlist(monkeypatch):
     env = tel._git_env(None, "u1")
     assert "GIT_DIR" not in env and "GIT_INDEX_FILE" not in env and "GIT_CONFIG_PARAMETERS" not in env
     assert env["GIT_SSH_COMMAND"] == "x" and env["GIT_CONFIG_GLOBAL"] == "x"
+
+
+def test_git_env_keeps_tls_auth_and_proxy_vars(monkeypatch):
+    keep = ("GIT_SSL_CAINFO", "GIT_SSL_CAPATH", "GIT_SSL_CERT", "GIT_SSL_KEY", "GIT_SSL_CERT_PASSWORD_PROTECTED",
+            "GIT_SSL_NO_VERIFY", "GIT_ASKPASS", "GIT_PROXY_COMMAND", "GIT_HTTP_PROXY_AUTHMETHOD",
+            "GIT_HTTP_LOW_SPEED_LIMIT", "GIT_HTTP_LOW_SPEED_TIME")
+    for k in keep:
+        monkeypatch.setenv(k, "v-" + k)
+    monkeypatch.setenv("GIT_DIR", "x")
+    monkeypatch.setenv("GIT_AUTHOR_EMAIL", "x")
+    env = tel._git_env(None, "u1")
+    assert all(env[k] == "v-" + k for k in keep)
+    assert "GIT_DIR" not in env and env["GIT_AUTHOR_NAME"] == "aicj-telemetry"
+
+
+def test_repo_task_lookup_honours_user_git_dir_but_upload_env_does_not(tmp_path, monkeypatch):
+    user_repo = _user_repo(tmp_path)
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    monkeypatch.setenv("GIT_DIR", str(user_repo / ".git"))
+    monkeypatch.setenv("GIT_WORK_TREE", str(user_repo))
+    assert tel._local_git(str(elsewhere), "rev-parse", "--show-toplevel", user_env=True) == str(user_repo.resolve())
+    assert tel._local_git(str(elsewhere), "rev-parse", "--show-toplevel") is None
+    assert tel._repo_task(str(elsewhere), "salt") is not None
+    env = tel._git_env(None, "u1")
+    assert "GIT_DIR" not in env and "GIT_WORK_TREE" not in env
+
+
+def test_upload_path_never_uses_user_env():
+    import inspect
+    assert "user_env=True" not in inspect.getsource(tel._run)
+    assert inspect.signature(tel._git).parameters["user_env"].default is False
+    assert inspect.signature(tel._local_git).parameters["user_env"].default is False

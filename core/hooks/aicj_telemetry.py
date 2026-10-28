@@ -102,7 +102,7 @@ _TS_RE = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z")
 _DATE_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
 
 _SENSITIVE = [
-    re.compile(r"(?<!\d)(?:\+?86[- ]?)?1[3-9]\d{9}(?!\d)"),         # mainland mobile number, optional +86/86 prefix
+    re.compile(r"(?<!\d)(?:(?:\+|00)?86[- ]?)?1[3-9]\d{9}(?!\d)"),         # mainland mobile number, optional +86/86 prefix
     re.compile(r"(?<!\d)\d{17}[\dXx](?![\dXx])"),                   # national id number
     re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+"),                # email
     re.compile(r"sk-[A-Za-z0-9_-]{8,}"),
@@ -461,7 +461,14 @@ def _user_ssh_configured(env: dict, cwd: Path | str | None) -> bool:
 # GIT_CONFIG_COUNT/KEY_n/VALUE_n/PARAMETERS ...) could redirect the upload at the user's own repo
 # or inject identity into team commits.
 _GIT_ENV_ALLOW = ("GIT_SSH", "GIT_SSH_COMMAND", "GIT_SSH_VARIANT", "GIT_CONFIG_GLOBAL",
-                  "GIT_CONFIG_SYSTEM", "GIT_CONFIG_NOSYSTEM", "GIT_EXEC_PATH")
+                  "GIT_CONFIG_SYSTEM", "GIT_CONFIG_NOSYSTEM", "GIT_EXEC_PATH",
+                  "GIT_SSL_CAINFO", "GIT_SSL_CAPATH", "GIT_SSL_CERT", "GIT_SSL_KEY",
+                  "GIT_SSL_CERT_PASSWORD_PROTECTED", "GIT_SSL_NO_VERIFY", "GIT_ASKPASS",
+                  "GIT_PROXY_COMMAND", "GIT_HTTP_PROXY_AUTHMETHOD", "GIT_HTTP_LOW_SPEED_LIMIT",
+                  "GIT_HTTP_LOW_SPEED_TIME")
+
+
+SAME_PGRP_ENV = "AICJ_TELEMETRY_SAME_PGRP"
 
 
 def _git_env(cwd: Path | str | None = None, user: str = "") -> dict:
@@ -478,13 +485,20 @@ def _git_env(cwd: Path | str | None = None, user: str = "") -> dict:
     return env
 
 
-def _kill_tree(proc) -> None:
+def _user_git_env() -> dict:
+    env = dict(os.environ)
+    env["GIT_TERMINAL_PROMPT"] = "0"
+    env["GCM_INTERACTIVE"] = "never"
+    return env
+
+
+def _kill_tree(proc, own_group: bool = True) -> None:
     try:
         if os.name == "nt":
             subprocess.run(["taskkill", "/T", "/F", "/PID", str(proc.pid)], capture_output=True,
                            timeout=10, stdin=subprocess.DEVNULL,
                            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-        else:
+        elif own_group:
             import signal
             os.killpg(proc.pid, signal.SIGKILL)
     except Exception:
@@ -495,30 +509,35 @@ def _kill_tree(proc) -> None:
         pass
 
 
-def _git(args: list[str], cwd: Path | str | None, timeout: int = GIT_TIMEOUT):
-    """Single choke point for every git subprocess. Raises subprocess/OS errors to the caller."""
+def _git(args: list[str], cwd: Path | str | None, timeout: int = GIT_TIMEOUT, user_env: bool = False):
+    """Single choke point for every git subprocess. Raises subprocess/OS errors to the caller.
+
+    user_env=True (read-only lookups on the user's own repo) keeps the inherited GIT_DIR/GIT_WORK_TREE;
+    the default scrubbed env is the only one the collect-repo upload path may use."""
     kwargs: dict = {}
     if os.name == "nt":
         kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0) | \
             getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
-    else:
+    own_group = os.name != "nt" and os.environ.get(SAME_PGRP_ENV) != "1"
+    if own_group:
+        # the uninstall runner sets SAME_PGRP_ENV so git stays in the runner's group and its killpg reaches us
         kwargs["start_new_session"] = True
     proc = subprocess.Popen(
-        ["git", *args], cwd=str(cwd) if cwd else None, env=_git_env(cwd, _prefix_user(args)), stdout=subprocess.PIPE,
+        ["git", *args], cwd=str(cwd) if cwd else None, env=_user_git_env() if user_env else _git_env(cwd, _prefix_user(args)), stdout=subprocess.PIPE,
         stderr=subprocess.PIPE, stdin=subprocess.DEVNULL, **kwargs,
     )
     try:
         stdout, stderr = proc.communicate(timeout=timeout)
     except subprocess.TimeoutExpired as exc:
         # kill ssh/credential helpers too: they hold the pipes and would block a plain kill()
-        _kill_tree(proc)
+        _kill_tree(proc, own_group)
         try:
             stdout, stderr = proc.communicate(timeout=KILL_DRAIN_TIMEOUT)
         except subprocess.TimeoutExpired:
             stdout, stderr = b"", b""
         raise subprocess.TimeoutExpired(exc.cmd, timeout, output=stdout, stderr=stderr)
     except BaseException:
-        _kill_tree(proc)
+        _kill_tree(proc, own_group)
         raise
     return subprocess.CompletedProcess(proc.args, proc.returncode, stdout, stderr)
 
@@ -527,9 +546,9 @@ def _out(proc) -> str:
     return proc.stdout.decode("utf-8", "replace").strip()
 
 
-def _local_git(cwd: str, *args: str) -> str | None:
+def _local_git(cwd: str, *args: str, user_env: bool = False) -> str | None:
     try:
-        proc = _git(list(args), cwd, LOCAL_GIT_TIMEOUT)
+        proc = _git(list(args), cwd, LOCAL_GIT_TIMEOUT, user_env=user_env)
     except Exception:
         return None
     return _out(proc) if proc.returncode == 0 else None
@@ -560,7 +579,7 @@ def _norm_origin(url: str) -> str:
 def _repo_task(cwd: str, salt: str) -> dict | None:
     if not isinstance(cwd, str) or not cwd.strip() or not os.path.isdir(cwd):
         return None
-    out = _local_git(cwd, "rev-parse", "--show-toplevel", "--git-common-dir")
+    out = _local_git(cwd, "rev-parse", "--show-toplevel", "--git-common-dir", user_env=True)
     if not out:
         return None
     lines = out.splitlines()
@@ -568,8 +587,8 @@ def _repo_task(cwd: str, salt: str) -> dict | None:
         return None
     top, common = lines[0].strip(), lines[1].strip()
     common_abs = _norm_path(os.path.join(cwd, common))
-    branch = _local_git(cwd, "symbolic-ref", "--short", "-q", "HEAD") or "HEAD"
-    origin = _local_git(cwd, "config", "--get", "remote.origin.url")
+    branch = _local_git(cwd, "symbolic-ref", "--short", "-q", "HEAD", user_env=True) or "HEAD"
+    origin = _local_git(cwd, "config", "--get", "remote.origin.url", user_env=True)
     repo, task = _keys(salt, common_abs, branch, origin)
     return {"repo": repo, "task": task, "repo_path": top, "branch": branch}
 

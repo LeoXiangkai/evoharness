@@ -13,6 +13,8 @@ sys.path.insert(0, str(REPO / "installer"))
 from lib import telemetry as inst_tel  # noqa: E402
 from lib.util import UserError  # noqa: E402
 
+REAL_LIB = REPO / "core" / "hooks" / "aicj_telemetry.py"
+
 AICJ = REPO / "installer" / "aicj.py"
 
 
@@ -103,7 +105,7 @@ def test_existing_team_bytes_validates(tmp_path):
 
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX process-group kill; Windows uses taskkill /T")
-def test_uninstall_timeout_kills_grandchildren(tmp_path):
+def test_uninstall_timeout_kills_grandchildren(tmp_path, monkeypatch):
     home = tmp_path / "home"
     (home / ".claude" / "aicj").mkdir(parents=True)
     (home / ".claude" / "bin").mkdir(parents=True)
@@ -111,13 +113,26 @@ def test_uninstall_timeout_kills_grandchildren(tmp_path):
     (home / ".claude" / "aicj" / "team.json").write_text("{}", encoding="utf-8")
     (home / ".claude" / inst_tel.LIB_REL).write_text("", encoding="utf-8")
     pidfile = tmp_path / "gc.pid"
+    fakebin = tmp_path / "fakebin"
+    fakebin.mkdir()
+    fake_git = fakebin / "git"
+    fake_git.write_text(f"#!/bin/sh\n[ \"$1\" = status ] || exit 1\necho $$ > {str(pidfile)!r}\nexec sleep 30\n", encoding="utf-8")
+    fake_git.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{fakebin}{os.pathsep}{os.environ['PATH']}")
     (home / ".claude" / "bin" / "aicj-telemetry").write_text(
-        "import subprocess, sys, time\n"
-        f"p = subprocess.Popen(['sleep', '30'])\nopen({str(pidfile)!r}, 'w').write(str(p.pid))\ntime.sleep(30)\n",
+        "import importlib.util, sys, time\n"
+        f"spec = importlib.util.spec_from_file_location('aicj_telemetry', {str(REAL_LIB)!r})\n"
+        "mod = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)\n"
+        "mod._git(['status'], None, 60)\n"  # real chain: _git -> (fake) git grandchild
+        "time.sleep(30)\n",
         encoding="utf-8")
     inst_tel.uninstall_report(home, None, timeout=2)
-    pid = int(pidfile.read_text())
     import time
+    for _ in range(20):
+        if pidfile.exists() and pidfile.read_text().strip():
+            break
+        time.sleep(0.1)
+    pid = int(pidfile.read_text())
     for _ in range(20):
         try:
             os.kill(pid, 0)

@@ -112,6 +112,13 @@ def test_phone_with_country_code_is_redacted():
         assert digits not in out and "1234" not in out, p
 
 
+def test_phone_with_0086_prefix_is_redacted():
+    digits = "138" + "1234" + "5678"
+    for p in ("00" + "86" + digits, "0086-" + digits, "0086 " + digits):
+        out = _scrubbed(tool="t" + p)
+        assert digits not in out and "1234" not in out, p
+
+
 def test_more_credential_formats_are_redacted():
     secrets = ["AIza" + "SyA1234567890abcdefghij", "glpat-" + "abcdefgh1234", "sk_" + "live_abcdefgh1234",
                "sk_" + "test_abcdefgh1234", "rk_" + "live_abcdefgh1234", "xoxb" + "-12345678-abcdef",
