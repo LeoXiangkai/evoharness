@@ -133,6 +133,9 @@ def evidence(profile: dict[str, str], root: Path, strict: bool) -> bool:
         return True
     script = root / ".ai-coding-java" / "scripts" / "evidence_check.py"
     if not script.is_file():
+        # Fall back to the checker shipped next to this hook in the component source.
+        script = Path(__file__).resolve().parent.parent / "scripts" / "evidence_check.py"
+    if not script.is_file():
         print("ai-coding-java pre-push: evidence_check.py not found, skip")
         return True
     path = Path(report_path)
