@@ -16,7 +16,7 @@ Changed files: `scripts/team_weekly.py`, `adapters/team-admin/**`, `tests/teleme
 
 ## Verification
 
-- command: `python3 -m pytest tests -q -p no:cacheprovider` — result: passed, 693 passed, 0 skipped
+- command: `python3 -m pytest tests -q -p no:cacheprovider` — result: passed, 696 passed, 0 skipped
 - command: `python3 scripts/sanitize_check.py` — result: ok, exit 0
 - command: `python3 scripts/template_integrity_check.py` — result: ok, exit 0
 - command: `python3 scripts/context_budget_check.py` — result: ok, exit 0
@@ -27,6 +27,7 @@ Changed files: `scripts/team_weekly.py`, `adapters/team-admin/**`, `tests/teleme
 
 - P0: none
 - P1: none open; one independent review found 2 high and 3 medium issues (tie judged as not improved, review outcomes not written back to the ledger, low-sample candidates, gate_deny baseline, test gaps), all fixed
+- P2: a second scoped review found 5 low issues (idle-card creation boundary, shared-metric verdict after partner closed, skill write-back gaps, zero-denominator wording, missing override test) plus standards items (private helper use, duplicated fallback, verdict literals, task-numbered test names, weak assertion), all fixed; metric-direction table consolidation and long-method split deferred
 - P2: two limitations documented in `docs/team-weekly-design.md` (cross-week first-green bias, counts not normalized by activity)
 
 ## Not-tested
@@ -37,4 +38,4 @@ Changed files: `scripts/team_weekly.py`, `adapters/team-admin/**`, `tests/teleme
 
 ## Delivery decision
 
-Merged into `main`. Next: open the team collect repo and run the first weekly review.
+Merged into `main`. Team collect repo opened (private); next: install with the team config on a member machine and run the first weekly review.
