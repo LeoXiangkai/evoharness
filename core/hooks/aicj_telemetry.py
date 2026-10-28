@@ -102,7 +102,7 @@ _TS_RE = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z")
 _DATE_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
 
 _SENSITIVE = [
-    re.compile(r"(?<!\d)1[3-9]\d{9}(?!\d)"),                       # mainland mobile number
+    re.compile(r"(?<!\d)(?:\+?86[- ]?)?1[3-9]\d{9}(?!\d)"),         # mainland mobile number, optional +86/86 prefix
     re.compile(r"(?<!\d)\d{17}[\dXx](?![\dXx])"),                   # national id number
     re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+"),                # email
     re.compile(r"sk-[A-Za-z0-9_-]{8,}"),
@@ -111,8 +111,28 @@ _SENSITIVE = [
     re.compile(r"AKIA[0-9A-Z]{8,}"),
     re.compile(r"eyJ[A-Za-z0-9_-]{3,}\.[A-Za-z0-9_-]{3,}\.?[A-Za-z0-9_-]*"),  # JWT
     re.compile(r"xox[abprs]-[A-Za-z0-9-]{8,}"),
+    re.compile(r"AIza[0-9A-Za-z_-]{20,}"),                          # Google API key
+    re.compile(r"glpat-[A-Za-z0-9_-]{8,}"),                         # GitLab PAT
+    re.compile(r"(?:sk|rk)_(?:live|test)_[A-Za-z0-9]{8,}"),         # Stripe keys
     re.compile(r"(?<!\d)\d{1,3}(?:\.\d{1,3}){3}(?!\d)"),            # IPv4 (local service addresses)
 ]
+
+
+# Closed vocabulary for user-defined token fields (anything else is replaced by "x-" + salted hash).
+# Layer names: LAYER_SPECS in adapters/optional-plugins/verify-probe/bin/verify-probe.
+KNOWN_LAYERS = frozenset({"backend-compile", "backend-unit", "service-start", "app-api", "database",
+                          "frontend-unit", "e2e"})
+# Rule tags: the "[tag]" prefix of gate/hook messages; the only ones emitted are in
+# core/hooks/push-review-gate.py and core/bin/git-safe.
+KNOWN_RULE_TAGS = frozenset({"push-review-gate", "git-safe"})
+
+
+def _vocab_or_hash(salt: str, value: object, vocab: frozenset) -> object:
+    if not isinstance(value, str):
+        return value
+    if value in vocab:
+        return value
+    return "x-" + _sha(salt, value)[:10]
 
 
 def _valid_ts(value: object) -> bool:
@@ -271,7 +291,7 @@ def _append_lines(path: Path, lines: list[str]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     blob = ("\n".join(lines) + "\n").encode("utf-8")
     # one os.write on an O_APPEND fd: concurrent hook processes cannot interleave a line (binary: no CRLF)
-    fd = os.open(str(path), os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o644)
+    fd = os.open(str(path), os.O_WRONLY | os.O_APPEND | os.O_CREAT | getattr(os, "O_BINARY", 0), 0o644)
     try:
         locked = False
         if os.name == "nt":
@@ -437,12 +457,24 @@ def _user_ssh_configured(env: dict, cwd: Path | str | None) -> bool:
     return _SSH_CFG_CACHE[where]
 
 
-def _git_env(cwd: Path | str | None = None) -> dict:
-    env = dict(os.environ)
+# Only these inherited GIT_* vars survive: everything else (GIT_DIR, GIT_WORK_TREE, GIT_AUTHOR_*,
+# GIT_CONFIG_COUNT/KEY_n/VALUE_n/PARAMETERS ...) could redirect the upload at the user's own repo
+# or inject identity into team commits.
+_GIT_ENV_ALLOW = ("GIT_SSH", "GIT_SSH_COMMAND", "GIT_SSH_VARIANT", "GIT_CONFIG_GLOBAL",
+                  "GIT_CONFIG_SYSTEM", "GIT_CONFIG_NOSYSTEM", "GIT_EXEC_PATH")
+
+
+def _git_env(cwd: Path | str | None = None, user: str = "") -> dict:
+    env = {k: v for k, v in os.environ.items() if not k.upper().startswith("GIT_")}
+    env.update({k: os.environ[k] for k in _GIT_ENV_ALLOW if k in os.environ})
     env["GIT_TERMINAL_PROMPT"] = "0"
     env["GCM_INTERACTIVE"] = "never"
     if not _user_ssh_configured(env, cwd):
         env["GIT_SSH_COMMAND"] = "ssh -o BatchMode=yes"
+    if user:
+        email = f"{user}@telemetry.invalid"
+        env.update({"GIT_AUTHOR_NAME": "aicj-telemetry", "GIT_AUTHOR_EMAIL": email,
+                    "GIT_COMMITTER_NAME": "aicj-telemetry", "GIT_COMMITTER_EMAIL": email})
     return env
 
 
@@ -472,7 +504,7 @@ def _git(args: list[str], cwd: Path | str | None, timeout: int = GIT_TIMEOUT):
     else:
         kwargs["start_new_session"] = True
     proc = subprocess.Popen(
-        ["git", *args], cwd=str(cwd) if cwd else None, env=_git_env(cwd), stdout=subprocess.PIPE,
+        ["git", *args], cwd=str(cwd) if cwd else None, env=_git_env(cwd, _prefix_user(args)), stdout=subprocess.PIPE,
         stderr=subprocess.PIPE, stdin=subprocess.DEVNULL, **kwargs,
     )
     try:
@@ -611,6 +643,13 @@ def _build(team: dict, ident: dict, etype: str, data: dict, ts: str,
     for key, value in (data or {}).items():
         if key not in ENVELOPE:  # envelope is set by the library, never by the caller's data
             event[key] = value
+    salt = str(team.get("salt", ""))
+    if etype == "verify_probe":
+        for key in ("layers", "failed_layers"):
+            if isinstance(event.get(key), (list, tuple)):
+                event[key] = [_vocab_or_hash(salt, v, KNOWN_LAYERS) for v in event[key]]
+    elif etype == "hook_gate" and "rule_tag" in event:
+        event["rule_tag"] = _vocab_or_hash(salt, event["rule_tag"], KNOWN_RULE_TAGS)
     return sanitize(event)
 
 
@@ -1058,6 +1097,13 @@ def collect(claude_dir: Path) -> int:
 # ---------------------------------------------------------------------------
 def _result(status_: str, reason: str, uploaded: int = 0) -> dict:
     return {"status": status_, "reason": reason, "uploaded": uploaded}
+
+
+def _prefix_user(prefix: list[str]) -> str:
+    for item in prefix:
+        if item.startswith("user.email=") and item.endswith("@telemetry.invalid"):
+            return item[len("user.email="):-len("@telemetry.invalid")]
+    return ""
 
 
 def _run(repo: Path | str | None, prefix: list[str], args: list[str], *, check: bool, category: str):

@@ -187,3 +187,32 @@ def test_maven_without_results_header_uses_last_summary():
                                  "gradlew.bat test", "py -m pytest", "py -3 -m pytest -q", "PYTHON.EXE -m pytest"])
 def test_windows_test_command_names(cmd):
     assert cap.is_test_command(cmd)
+
+
+@pytest.mark.parametrize("command,stdout,event,framework,green", [
+    ("./gradlew test", "BUILD SUCCESSFUL in 3s", "PostToolUse", "gradle", True),
+    ("./gradlew test", "BUILD FAILED in 3s", "PostToolUse", "gradle", False),
+    ("./gradlew test", "", "PostToolUseFailure", "gradle", False),
+    ("mvn -q test", "", "PostToolUse", "maven", True),
+])
+def test_quiet_test_run_emits_event_without_counts(claude, team, command, stdout, event, framework, green):
+    r = run_hook(claude, post(stdout, event, command))
+    assert r.returncode == 0 and r.stdout == ""
+    runs = [e for e in spool_events(claude) if e["type"] == "test_run"]
+    assert len(runs) == 1
+    assert runs[0]["framework"] == framework and runs[0]["green"] is green
+    assert not {"passed", "failed", "skipped", "errors"} & set(runs[0])
+
+
+def test_quiet_run_shares_event_id_and_aggregates_as_zero_counts(claude, team):
+    base = {**post("", command="mvn -q test"), "session_id": "s1", "tool_use_id": "t1"}
+    run_hook(claude, base)
+    run_hook(claude, {**base, "hook_event_name": "PostToolUseFailure", "error": "exit 1"})
+    runs = [e for e in spool_events(claude) if e["type"] == "test_run"]
+    assert len({e["event_id"] for e in runs}) == 1
+    import importlib.util as u
+    spec = u.spec_from_file_location("agg", HOOK.parents[2] / "scripts" / "telemetry_aggregate.py")
+    agg = u.module_from_spec(spec)
+    spec.loader.exec_module(agg)
+    d = agg.detail(runs[:1])
+    assert d["tests_passed"] == 0 and d["test_runs"] == 1

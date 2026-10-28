@@ -58,7 +58,7 @@ task_key(claude_dir: Path, cwd: str, team: dict) -> tuple[str, str] | None   # (
 | `schema` | int | 固定 1 |
 | `type` | enum | 见下表 |
 | `ts` | ts | UTC `YYYY-MM-DDTHH:MM:SSZ` |
-| `event_id` | hash | 去重键。直接产生的事件取 uuid4 十六进制；从本地日志转来的取 `sha256(install + 来源名 + 行原文)` 前 32 位 |
+| `event_id` | hash | 去重键。直接产生的事件取 uuid4 十六进制；从本地日志转来的取 `sha256(user + 来源名 + locator + 行原文)` 前 32 位（locator 为来源内的定位，如文件内行位置） |
 | `team` | token | 团队配置里的 `team_id` |
 | `user` | token | 使用者哈希 |
 | `install` | hash | 安装 ID 哈希前 8 位 |
@@ -120,7 +120,7 @@ task_key(claude_dir: Path, cwd: str, team: dict) -> tuple[str, str] | None   # (
 本地日志转换时，`+00:00` 结尾的时间先归一成 `Z`。
 
 4. 克隆或更新：`collect-repo/` 不存在时 `git clone --depth 1 -b <branch>`，否则 `git pull --rebase`。所有 git 调用带 `-c core.hooksPath=<不存在的目录>`，使用者名 `aicj-telemetry`，邮箱 `<user>@telemetry.invalid`，不写入真实身份。
-5. 合并：把 spool 中未上报的部分按日期追加到 `<date>/<user>.jsonl`，按 `event_id` 跳过目标文件里已有的记录。
+5. 合并：把 spool 中未上报的部分按日期追加到 `<date>/<user>-<install>.jsonl`，按 `event_id` 跳过目标文件里已有的记录。
 6. 提交、推送。被拒时先 `pull --rebase` 再推，最多 3 次。rebase 或 pull 失败时执行 `rebase --abort`、`reset --hard origin/<branch>`，再从 spool 重新合并；克隆随时可以丢弃重建，spool 才是真相源。
 7. 成功：更新上报偏移和 `last_success`。失败：只记 `last_attempt` 和 `last_error`（错误类别），spool 保留到下次。
 8. 容量：spool 总量超过 `spool_max_mb`（默认 20）时，从最旧的日期文件开始删除。

@@ -133,3 +133,55 @@ def test_does_not_touch_real_home(claude, team, tmp_path, monkeypatch):
     _seed(claude)
     tel.collect(claude)
     assert list(home.iterdir()) == []
+
+
+def _user_repo(tmp_path):
+    from .conftest import git
+    user_repo = tmp_path / "userrepo"
+    git(tmp_path, "init", "-b", "main", str(user_repo))
+    (user_repo / "secret.txt").write_text("proprietary\n", encoding="utf-8")
+    git(user_repo, "add", "-A")
+    git(user_repo, "-c", "user.name=u", "-c", "user.email=u" + "@x.test", "commit", "-qm", "user work")
+    git(user_repo, "remote", "add", "origin", "https://example.invalid/user/repo.git")
+    return user_repo
+
+
+def test_inherited_git_dir_does_not_touch_user_repo(claude, team, remote, tmp_path, monkeypatch):
+    from .conftest import git
+    user_repo = _user_repo(tmp_path)
+    head, origin = git(user_repo, "rev-parse", "HEAD"), git(user_repo, "remote", "get-url", "origin")
+    _seed(claude)
+    monkeypatch.setenv("GIT_DIR", str(user_repo / ".git"))
+    monkeypatch.setenv("GIT_WORK_TREE", str(user_repo))
+    res = tel.run_report(claude, force=True)
+    monkeypatch.delenv("GIT_DIR")
+    monkeypatch.delenv("GIT_WORK_TREE")
+    assert res["status"] == "ok", res
+    assert git(user_repo, "rev-parse", "HEAD") == head
+    assert git(user_repo, "remote", "get-url", "origin") == origin
+    assert "user work" not in git(remote, "log", "main", "--format=%s")
+    assert "secret.txt" not in git(remote, "ls-tree", "-r", "--name-only", "main")
+    assert remote_files(remote)
+
+
+def test_inherited_git_identity_env_is_ignored(claude, team, remote, monkeypatch):
+    from .conftest import git
+    _seed(claude)
+    mail = "real" + "@corp.example"
+    for k, v in (("GIT_AUTHOR_NAME", "Real Name"), ("GIT_AUTHOR_EMAIL", mail),
+                 ("GIT_COMMITTER_NAME", "Real Name"), ("GIT_COMMITTER_EMAIL", mail),
+                 ("GIT_CONFIG_COUNT", "1"), ("GIT_CONFIG_KEY_0", "user.email"), ("GIT_CONFIG_VALUE_0", mail)):
+        monkeypatch.setenv(k, v)
+    res = tel.run_report(claude, force=True)
+    assert res["status"] == "ok", res
+    who = git(remote, "log", "-1", "--format=%an <%ae> | %cn <%ce>", "main").strip()
+    assert "Real Name" not in who and "corp.example" not in who
+    assert who.count("aicj-telemetry <") == 2 and who.count("@telemetry.invalid>") == 2
+
+
+def test_git_env_allowlist(monkeypatch):
+    for k in ("GIT_DIR", "GIT_INDEX_FILE", "GIT_CONFIG_PARAMETERS", "GIT_SSH_COMMAND", "GIT_CONFIG_GLOBAL"):
+        monkeypatch.setenv(k, "x")
+    env = tel._git_env(None, "u1")
+    assert "GIT_DIR" not in env and "GIT_INDEX_FILE" not in env and "GIT_CONFIG_PARAMETERS" not in env
+    assert env["GIT_SSH_COMMAND"] == "x" and env["GIT_CONFIG_GLOBAL"] == "x"

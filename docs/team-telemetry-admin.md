@@ -12,7 +12,7 @@ Create an empty private git repository that every member can push to (branch `ma
 {"team_id": "team1", "collect_repo": "<git url>", "salt": "<shared salt>", "branch": "main"}
 ```
 
-Optional: `upload_interval_hours`. Host it at an http(s) URL, or hand members the file.
+Optional: `upload_interval_hours`; `spool_max_mb` (default 20): when the local spool exceeds it, the oldest day files are deleted first. Host it at an http(s) URL, or hand members the file.
 Members join with `aicj install --team-config <URL|file://|path>` (Windows: `install.ps1 -TeamConfig`). Without the flag nothing is collected, no hook is registered, and neither team.json nor `aicj/telemetry/` is created (hook code is installed but dormant).
 
 ## 3. Aggregate
@@ -41,3 +41,10 @@ Wiping the telemetry directory of an ANONYMOUS user (no git email) re-keys that 
 Uploads use `ssh -o BatchMode=yes` unless the member already set `GIT_SSH_COMMAND`, `GIT_SSH` or `core.sshCommand`, in which case their SSH setup is left untouched. Host key checking is not relaxed: the collect host must already be in the member's `known_hosts`.
 
 `aicj uninstall` removes `telemetry/collect-repo/` (a clone of the whole team's data) and `telemetry/report.lock`; spool, state and identity are kept like lesson data.
+
+## Reading the numbers
+
+- The `task_days` family counts `task_snapshot` events: one snapshot per task per day, so it is task-days, not distinct tasks (`task_rework.tasks` counts distinct user+task).
+- `bypass` counts ATTEMPTS, including ones a gate later blocked. This is intended.
+- A member who switches from the anonymous identity to an email identity appears as two user hashes.
+- Quiet test runs (Gradle printing only `BUILD SUCCESSFUL`, `mvn -q`) are recorded as a `test_run` with framework and green only; their counts are treated as 0 in `tests_passed|failed|skipped`.
