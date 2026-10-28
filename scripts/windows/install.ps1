@@ -36,6 +36,33 @@ function Install-WingetPackage([string]$Id) {
     Refresh-Path
 }
 
+function Test-Runnable([string]$Name) {
+    # A command can exist yet fail to start (for example a truncated claude.exe), so run it instead of only resolving it.
+    if (-not (Get-Command $Name -ErrorAction SilentlyContinue)) { return $false }
+    try { & $Name --version *> $null; return $LASTEXITCODE -eq 0 } catch { return $false }
+}
+function Install-ClaudeCode {
+    # The official installer calls exit on failure; run it in a child process so it cannot terminate this script.
+    $installer = Join-Path ([IO.Path]::GetTempPath()) "claude-install-$PID.ps1"
+    Invoke-WebRequest https://claude.ai/install.ps1 -OutFile $installer -UseBasicParsing
+    try {
+        & powershell -NoProfile -ExecutionPolicy Bypass -File $installer
+        Assert-ExitCode "Claude Code 官方安装器"
+    } finally {
+        Remove-Item $installer -Force -ErrorAction SilentlyContinue
+    }
+    $localBin = Join-Path $HOME ".local\bin"
+    if (Test-Path $localBin) { $env:Path = "$localBin$([IO.Path]::PathSeparator)$env:Path" }
+    if (-not (Test-Runnable "claude")) { throw "Claude Code 安装后仍无法运行（claude --version 失败）；请按 https://docs.anthropic.com/en/docs/claude-code/setup 手动安装后重跑" }
+}
+function Test-CollectRepoAccess([string]$ConfigPath) {
+    try { $repo = (Get-Content $ConfigPath -Raw -Encoding UTF8 | ConvertFrom-Json).collect_repo } catch { $repo = "" }
+    if ([string]::IsNullOrWhiteSpace($repo)) { return }
+    & git ls-remote --heads $repo *> $null
+    if ($LASTEXITCODE -ne 0) {
+        Write-Warning "当前账号无法访问团队采集仓库，数据会先留在本机，上传会失败。请先登录有权限的 GitHub 账号（gh auth login，或 git clone 该仓库一次以保存凭据），再运行 aicj-telemetry report --force。"
+    }
+}
 function Assert-ExitCode([string]$Action) {
     if ($LASTEXITCODE -ne 0) { throw "$Action 失败，退出码 $LASTEXITCODE" }
 }
@@ -159,7 +186,7 @@ try {
     $RepoDir = [IO.Path]::GetFullPath($RepoDir)
 
     if (-not $NoPrereqs) {
-        if (-not (Get-Command git -ErrorAction SilentlyContinue)) { Install-WingetPackage "Git.Git" }
+        if (-not (Test-Runnable "git")) { Install-WingetPackage "Git.Git" }
         $python = Get-Command py -ErrorAction SilentlyContinue
         if (-not $python) { Install-WingetPackage "Python.Python.3.12" }
         & py -3 -c "import sys; raise SystemExit(0 if sys.version_info >= (3, 9) else 1)"
@@ -167,11 +194,11 @@ try {
         & py -3 -c "import sys; raise SystemExit(0 if sys.version_info >= (3, 9) else 1)"
         Assert-ExitCode "Python 3.9+ 版本检查"
         if (-not $NoHud -and -not (Get-Command node -ErrorAction SilentlyContinue)) { Install-WingetPackage "OpenJS.NodeJS.LTS" }
-        if (-not (Get-Command claude -ErrorAction SilentlyContinue) -and -not $NoClaude) {
-            Write-Host "未找到 Claude Code，正在运行官方安装器..."
-            Invoke-Expression (Invoke-RestMethod https://claude.ai/install.ps1)
-            $localBin = Join-Path $HOME ".local\bin"
-            if (Test-Path $localBin) { $env:Path = "$localBin$([IO.Path]::PathSeparator)$env:Path" }
+        if (-not $NoClaude -and -not (Test-Runnable "claude")) {
+            $broken = Get-Command claude -ErrorAction SilentlyContinue | Select-Object -First 1
+            if ($broken) { Write-Warning "已找到 $($broken.Source) 但无法运行；若是 npm 全局安装，请执行 npm uninstall -g @anthropic-ai/claude-code，避免它在 PATH 中挡住新安装的版本" }
+            Write-Host "未找到可运行的 Claude Code，正在运行官方安装器..."
+            Install-ClaudeCode
         }
     }
 
@@ -231,7 +258,10 @@ try {
         $installArgs = @("install") + $homeArgs
         if ($adapterNames.Count -gt 0) { $installArgs += "--adapters"; $installArgs += (($adapterNames | Select-Object -Unique) -join ",") }
         if ($NoHud) { $installArgs += "--no-hud" }
-        if (-not [string]::IsNullOrWhiteSpace($TeamConfig)) { $installArgs += "--team-config"; $installArgs += $TeamConfig }
+        if (-not [string]::IsNullOrWhiteSpace($TeamConfig)) {
+            $installArgs += "--team-config"; $installArgs += $TeamConfig
+            Test-CollectRepoAccess $TeamConfig
+        }
         & py -3 installer/aicj.py @installArgs
         Assert-ExitCode "aicj 安装"
         Install-CcLauncher
