@@ -194,7 +194,7 @@ def uninstall_report(home: Path, source: Path | None, timeout: int = 60) -> None
         if not script.is_file() or not lib.is_file():
             return
         env_claude = str(home / ".claude")
-        env = dict(os.environ, AICJ_CLAUDE_DIR=env_claude)
+        env = dict(os.environ, AICJ_CLAUDE_DIR=env_claude, AICJ_TELEMETRY_SAME_PGRP="1")
         _run_killing_tree([sys.executable, str(script), "report", "--force"], env, timeout)
     except Exception:
         return

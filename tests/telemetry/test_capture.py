@@ -216,3 +216,37 @@ def test_quiet_run_shares_event_id_and_aggregates_as_zero_counts(claude, team):
     spec.loader.exec_module(agg)
     d = agg.detail(runs[:1])
     assert d["tests_passed"] == 0 and d["test_runs"] == 1
+
+
+@pytest.mark.parametrize("command", [
+    "mvn package -DskipTests", "mvn -q install -Dmaven.test.skip=true", "gradle build -x test",
+    "./gradlew build --exclude-task test", "mvnw.cmd -q package -DskipTests", "gradle build -xtest",
+    "mvn -q clean", "gradle assemble",
+])
+def test_quiet_build_that_skips_tests_emits_no_test_run(claude, team, command):
+    r = run_hook(claude, post("", "PostToolUse", command))
+    assert r.returncode == 0
+    assert [e for e in spool_events(claude) if e["type"] == "test_run"] == []
+
+
+@pytest.mark.parametrize("command,framework", [
+    ("mvn -q test", "maven"), ("mvn -q deploy", "maven"), ("gradle build -x javadoc", "gradle")])
+def test_quiet_build_that_runs_tests_emits_green_test_run(claude, team, command, framework):
+    run_hook(claude, post("", "PostToolUse", command))
+    runs = [e for e in spool_events(claude) if e["type"] == "test_run"]
+    assert len(runs) == 1 and runs[0]["framework"] == framework and runs[0]["green"] is True
+
+
+@pytest.mark.parametrize("command,framework", [
+    ("gradlew.bat build", "gradle"), ("mvnw.cmd -q test", "maven"), ("go.exe test ./...", "go"),
+    ("GRADLEW.BAT build", "gradle")])
+def test_framework_strips_windows_extensions(command, framework):
+    assert cap.test_framework(command) == framework
+
+
+def test_build_failed_matches_gradle_failure_banner():
+    assert cap._BUILD_FAILED.search("FAILURE: Build failed with an exception.")
+
+
+def test_mvnw_cmd_skip_tests_is_bypass():
+    assert cap.bypass_kinds("mvnw.cmd package -DskipTests") == ["skip_tests"]

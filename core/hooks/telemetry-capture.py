@@ -28,6 +28,8 @@ _VALUE_FLAGS = {"-m", "-F", "-C", "-c", "--message", "--file", "--author", "--da
 _SKIP_TESTS = re.compile(r"-DskipTests(?!=false)\b|-Dmaven\.test\.skip(?!=false)\b", re.IGNORECASE)
 _ASSIGN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 _GIT_OPTS_WITH_VALUE = {"-C", "-c", "--git-dir", "--work-tree", "--namespace"}
+_MAVEN_TEST_GOALS = ("test", "verify", "package", "install", "deploy")
+_GRADLE_TEST_TASKS = ("test", "check", "build")
 _BUILD_TOOLS = {"mvn", "mvnw", "gradle", "gradlew"}
 
 
@@ -103,7 +105,7 @@ def _short_cluster_has_n(tok: str) -> bool:
 
 
 def _build_tool(cmd: list[str]) -> bool:
-    return bool(cmd) and Path(cmd[0]).name.lower() in _BUILD_TOOLS
+    return bool(cmd) and _bare_name(cmd) in _BUILD_TOOLS
 
 
 def bypass_kinds(command: str) -> list[str]:
@@ -118,14 +120,18 @@ def bypass_kinds(command: str) -> list[str]:
     return kinds
 
 
-def _is_test_segment(cmd: list[str]) -> bool:
-    if not cmd:
-        return False
+def _bare_name(cmd: list[str]) -> str:
     name = Path(cmd[0].replace("\\", "/")).name.lower()
     for ext in (".exe", ".cmd", ".bat"):
         if name.endswith(ext):
-            name = name[:-len(ext)]
-            break
+            return name[:-len(ext)]
+    return name
+
+
+def _is_test_segment(cmd: list[str]) -> bool:
+    if not cmd:
+        return False
+    name = _bare_name(cmd)
     rest = cmd[1:]
     if name in ("pytest", "py.test", "jest", "vitest"):
         return True
@@ -136,14 +142,42 @@ def _is_test_segment(cmd: list[str]) -> bool:
     if name.startswith("python"):
         return rest[:2] == ["-m", "pytest"]
     if name in ("mvn", "mvnw"):
-        return any(t in ("test", "verify", "package", "install") for t in rest)
+        return any(t in _MAVEN_TEST_GOALS for t in rest)
     if name in ("gradle", "gradlew"):
-        return any(t in ("test", "check", "build") for t in rest)
+        return any(t in _GRADLE_TEST_TASKS for t in rest)
     if name in ("npm", "pnpm", "yarn"):
         return rest[:1] == ["test"] or rest[:2] == ["run", "test"]
     if name == "go":
         return rest[:1] == ["test"]
     return False
+
+
+def _gradle_excludes_test(rest: list[str]) -> bool:
+    for i, t in enumerate(rest):
+        low = t.lower()
+        if low in ("-x", "--exclude-task"):
+            if i + 1 < len(rest) and rest[i + 1].strip().lower() == "test":
+                return True
+        elif low in ("-xtest", "--exclude-task=test"):
+            return True
+    return False
+
+
+def _segment_runs_tests(cmd: list[str]) -> bool:
+    """True when a build-tool segment really runs tests (goals present and not skipped)."""
+    if not cmd:
+        return False
+    name, rest = _bare_name(cmd), cmd[1:]
+    if name in ("mvn", "mvnw"):
+        return any(t in _MAVEN_TEST_GOALS for t in rest) and not any(_SKIP_TESTS.search(t) for t in rest)
+    if name in ("gradle", "gradlew"):
+        return any(t in _GRADLE_TEST_TASKS for t in rest) and not _gradle_excludes_test(rest)
+    return _is_test_segment(cmd)
+
+
+def fallback_runs_tests(command: str) -> bool:
+    return any(_is_test_segment(c) and _segment_runs_tests(c)
+               for c in (_command_of(seg)[1] for seg in _SEGMENT_SPLIT.split(command)))
 
 
 def is_test_command(command: str) -> bool:
@@ -156,7 +190,7 @@ def test_framework(command: str) -> str:
         cmd = _command_of(seg)[1]
         if not _is_test_segment(cmd):
             continue
-        name = Path(cmd[0].replace("\\", "/")).name.lower()
+        name = _bare_name(cmd)
         if name.startswith(("pytest", "py")) or name.startswith("python"):
             return "pytest"
         if name in ("mvn", "mvnw"):
@@ -169,7 +203,7 @@ def test_framework(command: str) -> str:
     return ""
 
 
-_BUILD_FAILED = re.compile(r"BUILD (?:FAILED|FAILURE)")
+_BUILD_FAILED = re.compile(r"BUILD (?:FAILED|FAILURE)|FAILURE: Build failed")
 
 
 # ---------------------------------------------------------------- test summaries
@@ -328,7 +362,7 @@ def main() -> None:
         if is_test_command(command):
             text = _response_text(payload)
             row = parse_test_summary(text)
-            if not row:  # quiet runs (gradle success, mvn -q): only framework + green are known
+            if not row and fallback_runs_tests(command):  # quiet runs (gradle success, mvn -q): only framework + green are known
                 row = {"framework": test_framework(command) or "unknown",
                        "green": event == "PostToolUse" and not _BUILD_FAILED.search(text)}
         if row:
