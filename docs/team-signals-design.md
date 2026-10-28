@@ -1,6 +1,6 @@
 # 团队采集补充信号设计（返工原因 / skill 使用 / 询问次数）
 
-状态：草稿，待确认。上游：`docs/team-telemetry-design.md`（采集与上传）、`docs/team-weekly-design.md`（周复盘）。
+状态：已确认（2026-10-28）。上游：`docs/team-telemetry-design.md`（采集与上传）、`docs/team-weekly-design.md`（周复盘）。
 
 ## 1. 目标与边界
 
@@ -135,7 +135,7 @@
 
 ## 8. 风险与决策点
 
-- **返工原因依赖 lesson 适配器**：纠错只由 lesson 适配器采集。团队安装若不带 lesson，返工原因整块为空。建议团队安装默认带上 lesson（`install.ps1 -TeamConfig` 时自动加 `-Adapters lesson`），待确认。
+- **返工原因依赖 lesson 适配器**：纠错只由 lesson 适配器采集。团队安装若不带 lesson，返工原因整块为空。已定：带 `--team-config`（Windows `-TeamConfig`）安装时自动加入 lesson 适配器；用户显式给的适配器列表保留并追加 lesson。
 - **关键词分类精度未知**：上线前无真实数据可校准，靠 G 占比和管理员抽查调规则。
 - **新增 UserPromptSubmit hook**：每次提交提示词多一次进程启动（毫秒级），只做前缀判断。
 - **Claude Code 内置命令列表会变**：漏掉的内置命令会以哈希形式出现，管理员能看到但不影响判断。
