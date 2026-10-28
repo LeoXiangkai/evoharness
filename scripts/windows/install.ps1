@@ -225,6 +225,7 @@ try {
         if ($HomeDir) { $homeArgs = @("--home", $HomeDir) }
         $adapterNames = @($Adapters -split "," | ForEach-Object { $_.Trim() } | Where-Object { $_ })
         if ($Mode -eq "worker" -and $adapterNames -notcontains "executor") { $adapterNames += "executor" }
+        if (-not [string]::IsNullOrWhiteSpace($TeamConfig) -and $adapterNames -notcontains "lesson") { $adapterNames += "lesson" }
         $installArgs = @("install") + $homeArgs
         if ($adapterNames.Count -gt 0) { $installArgs += "--adapters"; $installArgs += (($adapterNames | Select-Object -Unique) -join ",") }
         if ($NoHud) { $installArgs += "--no-hud" }

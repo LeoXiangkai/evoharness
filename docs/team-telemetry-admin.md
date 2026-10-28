@@ -52,3 +52,12 @@ Uploads use `ssh -o BatchMode=yes` unless the member already set `GIT_SSH_COMMAN
 ## Weekly review
 
 Administrators run a weekly review on the collect repo: `python3 scripts/team_weekly.py --repo <collect repo clone> [--week YYYY-Www] [--format md|json] [--min-n 20]` prints the week's numbers, due trials and subtraction candidates (read-only, exit 2 when the repo is missing or not a git repository). Install the `team-weekly` skill with `--adapters team-admin`; it turns the report into one batch confirmation and writes decisions and the trial ledger under `admin/`. Contract and thresholds: `docs/team-weekly-design.md`.
+
+### Rework cause, skill use and ask_user
+
+A `--team-config` install (Windows `-TeamConfig`) always adds the `lesson` adapter, because rework causes come from its corrections log. Field contract: `docs/telemetry-fields.md`; design: `docs/team-signals-design.md`.
+
+- `rework_share:A..G`: share of the week's corrections per cause (A requirement, B missed impact, C environment/tool/data, D code defect, E review, F test). The keyword rules are coarse; G is unclassified and only reported, not judged. When G is above 50% two weeks in a row the subtraction section asks you to tune `REWORK_RULES` and bump its version.
+- `skill_corrected_ratio:<skill>`: corrections within 10 minutes after the skill in the same session, divided by its calls. Non-framework skills appear as `x-<hash>`.
+- `ask_user_per_task_day`: AskUserQuestion questions per task-day; questions Claude asks in plain text are not counted.
+- Idle skill: a framework skill with 0 calls in the last 4 weeks is listed as a signal only; nothing is listed before the first `skill_use` event exists.
