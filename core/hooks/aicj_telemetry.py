@@ -12,6 +12,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import time
@@ -25,7 +26,8 @@ __all__ = [
 ]
 
 SCHEMA_VERSION = 1
-LOCK_STALE_SECONDS = 600
+LOCK_STALE_SECONDS = 1800
+EMAIL_RETRY_SECONDS = 3600
 ATTEMPT_MIN_INTERVAL_SECONDS = 3600
 GIT_TIMEOUT = 60
 LOCAL_GIT_TIMEOUT = 10
@@ -35,7 +37,7 @@ SNAPSHOT_WINDOW_DAYS = 14
 # ---------------------------------------------------------------------------
 # Schema (authoritative field table; docs/telemetry-fields.md is reconciled against it)
 # ---------------------------------------------------------------------------
-# kinds: int bool token hash tokens date ts, or ("enum", (values...))
+# kinds: int bool token hash user tokens date ts, or ("enum", (values...))
 PLATFORMS = ("darwin", "linux", "windows", "wsl")
 EVENT_TYPES = (
     "install", "project_init", "hook_gate", "bypass", "test_run", "review",
@@ -48,7 +50,7 @@ ENVELOPE = {
     "ts": "ts",
     "event_id": "hash",
     "team": "token",
-    "user": "token",
+    "user": "user",
     "install": "hash",
     "repo": "hash",
     "task": "hash",
@@ -95,6 +97,7 @@ SCHEMA = {
 
 _TOKEN_RE = re.compile(r"[A-Za-z0-9._:+-]{1,64}")
 _HASH_RE = re.compile(r"[0-9a-f]{8,64}")
+_USER_RE = re.compile(r"(?:anon-)?[0-9a-f]{16}")
 _TS_RE = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z")
 _DATE_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
 
@@ -152,6 +155,9 @@ def _check(kind: object, value: object) -> bool:
     if kind == "hash":
         # hex only: digit-run patterns (phone/id) would false-positive on random hex
         return isinstance(value, str) and bool(_HASH_RE.fullmatch(value))
+    if kind == "user":
+        # salted hash: hex-only, so the digit-run patterns would false-positive on random hex
+        return isinstance(value, str) and bool(_USER_RE.fullmatch(value))
     if kind == "tokens":
         return (isinstance(value, (list, tuple)) and len(value) <= 32
                 and all(_token_ok(v) for v in value))
@@ -275,6 +281,12 @@ def _dumps(event: dict) -> str:
 # ---------------------------------------------------------------------------
 # Team config / identity
 # ---------------------------------------------------------------------------
+def _safe_ref(name: str) -> bool:
+    return (bool(name) and not name.startswith(("-", "/")) and not name.endswith(("/", ".", ".lock"))
+            and ".." not in name and "//" not in name and "@{" not in name
+            and not re.search(r"[\s~^:?*\[\\\x00-\x1f\x7f]", name))
+
+
 def load_team(claude_dir: Path) -> dict | None:
     try:
         raw = _read_json(Path(claude_dir) / "aicj" / "team.json")
@@ -287,8 +299,13 @@ def load_team(claude_dir: Path) -> dict | None:
             return None
         if not isinstance(salt, str) or not salt.strip():
             return None
+        repo = repo.strip()
+        if repo.startswith("-"):
+            return None
         branch = raw.get("branch")
         branch = branch.strip() if isinstance(branch, str) and branch.strip() else "main"
+        if not _safe_ref(branch):
+            return None
 
         def _num(key: str, default: float) -> float:
             value = raw.get(key)
@@ -298,7 +315,7 @@ def load_team(claude_dir: Path) -> dict | None:
 
         team = dict(raw)
         team.update({
-            "team_id": team_id, "collect_repo": repo.strip(), "salt": salt, "branch": branch,
+            "team_id": team_id, "collect_repo": repo, "salt": salt, "branch": branch,
             "upload_interval_hours": _num("upload_interval_hours", 24.0),
             "spool_max_mb": _num("spool_max_mb", 20.0),
         })
@@ -344,14 +361,23 @@ def identity(claude_dir: Path, team: dict) -> dict:
             cached = {}
         fp = _sha(salt)[:8]
         user = cached.get("user")
-        stale = (not isinstance(user, str) or not user or cached.get("salt_fp") != fp
-                 or user.startswith("anon-"))  # anonymous users retry in case an email appeared
-        if stale:
+        checked = cached.get("email_checked")
+        checked = checked if isinstance(checked, (int, float)) and not isinstance(checked, bool) else 0
+        now = time.time()
+        invalid = not isinstance(user, str) or not user or cached.get("salt_fp") != fp
+        # anonymous users retry the email lookup, at most once per EMAIL_RETRY_SECONDS
+        retry = (not invalid and user.startswith("anon-")
+                 and (now - checked >= EMAIL_RETRY_SECONDS or checked > now))
+        changed = False
+        if invalid or retry:
             user = _user_hash(salt, _git_email(), install_id)
+            checked = now
+            changed = True
         result = {"user": user, "install": _sha(install_id)[:8]}
-        if cached.get("install_id") != install_id or cached.get("user") != user or cached.get("salt_fp") != fp:
+        if changed or cached.get("install_id") != install_id:
             try:
-                _write_json_atomic(path, {"install_id": install_id, "user": user, "salt_fp": fp})
+                _write_json_atomic(path, {"install_id": install_id, "user": user, "salt_fp": fp,
+                                          "email_checked": checked})
             except Exception:
                 pass
         return result
@@ -431,19 +457,25 @@ def _repo_task(cwd: str, salt: str) -> dict | None:
     if len(lines) < 2:
         return None
     top, common = lines[0].strip(), lines[1].strip()
-    common_abs = os.path.realpath(os.path.join(cwd, common))
+    common_abs = _norm_path(os.path.join(cwd, common))
     branch = _local_git(cwd, "symbolic-ref", "--short", "-q", "HEAD") or "HEAD"
     origin = _local_git(cwd, "config", "--get", "remote.origin.url")
+    repo, task = _keys(salt, common_abs, branch, origin)
+    return {"repo": repo, "task": task, "repo_path": top, "branch": branch}
+
+
+def _norm_path(path: str) -> str:
+    return os.path.realpath(path.replace("\\", "/") if os.name != "nt" else path).replace("\\", "/")
+
+
+def _keys(salt: str, common_abs: str, branch: str, origin: str | None) -> tuple[str, str]:
+    """The one place (repo, task) hashes are derived; collect-time converters must use it too."""
     if origin:
         repo_name = _norm_origin(origin)
     else:
         repo_name = os.path.basename(os.path.dirname(common_abs)) if os.path.basename(common_abs) == ".git" \
             else os.path.basename(common_abs)
-    return {
-        "repo": _sha(salt, repo_name)[:12],
-        "task": _sha(salt, common_abs, "\n", branch)[:12],
-        "repo_path": top, "branch": branch,
-    }
+    return _sha(salt, repo_name)[:12], _sha(salt, common_abs, "\n", branch)[:12]
 
 
 def task_key(claude_dir: Path, cwd: str, team: dict) -> tuple[str, str] | None:
@@ -483,7 +515,7 @@ def _register_task(claude_dir: Path, info: dict) -> None:
 # ---------------------------------------------------------------------------
 # emit
 # ---------------------------------------------------------------------------
-def _build(claude_dir: Path, team: dict, ident: dict, etype: str, data: dict, ts: str,
+def _build(team: dict, ident: dict, etype: str, data: dict, ts: str,
            event_id: str, repo_task: tuple[str, str] | None, version: str | None) -> dict | None:
     event: dict = {
         "schema": SCHEMA_VERSION, "type": etype, "ts": ts, "event_id": event_id,
@@ -505,7 +537,8 @@ def _spool_write(claude_dir: Path, event: dict) -> None:
 
 
 def emit(claude_dir: Path, type: str, data: dict, *, cwd: str | None = None,
-         version: str | None = None) -> bool:
+         version: str | None = None, event_id: str | None = None) -> bool:
+    """Spool one event. A caller-supplied event_id (hex hash) is kept; otherwise a uuid4 is used."""
     try:
         team = load_team(claude_dir)
         if team is None or type not in SCHEMA:
@@ -514,8 +547,10 @@ def emit(claude_dir: Path, type: str, data: dict, *, cwd: str | None = None,
         if not ident["user"]:
             return False
         rt = task_key(claude_dir, cwd, team) if cwd else None
-        event = _build(claude_dir, team, ident, type, data if isinstance(data, dict) else {},
-                       _iso(_now()), uuid.uuid4().hex, rt, version)
+        if not (isinstance(event_id, str) and _HASH_RE.fullmatch(event_id)):
+            event_id = uuid.uuid4().hex
+        event = _build(team, ident, type, data if isinstance(data, dict) else {},
+                       _iso(_now()), event_id, rt, version)
         if event is None:
             return False
         _spool_write(claude_dir, event)
@@ -548,7 +583,7 @@ def _save_state(claude_dir: Path, state: dict) -> None:
 def _acquire_lock(tdir: Path) -> bool:
     tdir.mkdir(parents=True, exist_ok=True)
     path = tdir / "report.lock"
-    for _ in range(2):
+    for _ in range(3):
         try:
             fd = os.open(str(path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
         except FileExistsError:
@@ -556,13 +591,33 @@ def _acquire_lock(tdir: Path) -> bool:
                 age = time.time() - path.stat().st_mtime
             except FileNotFoundError:
                 continue
-            if age > LOCK_STALE_SECONDS:
+            if age <= LOCK_STALE_SECONDS:
+                return False
+            # steal atomically: whoever renames the stale file away owns the right to re-create it
+            grave = tdir / ("report.lock.stale." + uuid.uuid4().hex[:8])
+            try:
+                os.replace(str(path), str(grave))
+            except OSError:
+                continue  # another stealer won (or the lock was released); retry O_EXCL
+            try:
+                moved_age = time.time() - grave.stat().st_mtime
+            except OSError:
+                moved_age = LOCK_STALE_SECONDS + 1
+            if moved_age <= LOCK_STALE_SECONDS:  # we grabbed a lock a faster stealer had just re-created
                 try:
-                    path.unlink()
+                    os.link(str(grave), str(path))
                 except OSError:
-                    return False
-                continue
-            return False
+                    pass
+                try:
+                    grave.unlink()
+                except OSError:
+                    pass
+                return False
+            try:
+                grave.unlink()
+            except OSError:
+                pass
+            continue
         try:
             os.write(fd, str(os.getpid()).encode())
         finally:
@@ -589,8 +644,9 @@ class _Ctx:
         self.ident = ident
         self._rt: dict = {}
 
-    def event_id(self, source: str, raw: str) -> str:
-        return _sha(self.ident["install"], source, raw)[:32]
+    def event_id(self, source: str, raw: str, locator: object = "") -> str:
+        # install-independent: reinstalling or wiping telemetry state must not re-key old rows
+        return _sha(self.ident["user"], "\n", source, "\n", str(locator), "\n", raw)[:32]
 
     def repo_task(self, cwd: object) -> tuple[str, str] | None:
         if not isinstance(cwd, str) or not cwd:
@@ -600,9 +656,9 @@ class _Ctx:
         return self._rt[cwd]
 
     def build(self, etype: str, data: dict, ts: str, source: str, raw: str,
-              rt: tuple[str, str] | None) -> dict | None:
-        return _build(self.claude_dir, self.team, self.ident, etype, data, ts,
-                      self.event_id(source, raw), rt, None)
+              rt: tuple[str, str] | None, locator: object = "") -> dict | None:
+        return _build(self.team, self.ident, etype, data, ts,
+                      self.event_id(source, raw, locator), rt, None)
 
 
 def _hash_name(ctx: _Ctx, value: object) -> str | None:
@@ -631,27 +687,32 @@ def _conv_gate_event(ctx: _Ctx, row: dict, raw: str, state: dict, aux: dict) -> 
         data["rule_tag"] = m.group(1).strip()
     if rule_line:
         data["rule_hash"] = _hash_name(ctx, rule_line)
-    return ctx.build("hook_gate", data, ts, "gate-events", raw, ctx.repo_task(row.get("cwd")))
+    return ctx.build("hook_gate", data, ts, "gate-events", raw, ctx.repo_task(row.get("cwd")), aux.get("locator", ""))
 
 
 def _gate_task(ctx: _Ctx, row: dict) -> tuple[str, str] | None:
     branch = row.get("branch")
-    if not isinstance(branch, str) or not branch:
+    if not isinstance(branch, str) or not branch.strip():
         return None
+    branch = branch.strip()
     common = row.get("common_dir")
-    if not isinstance(common, str) or not common:
+    if isinstance(common, str) and common.strip():
+        common_abs = _norm_path(common.strip())
+    else:
         root = row.get("repo_root")
-        if not isinstance(root, str) or not root:
+        if not isinstance(root, str) or not root.strip():
             return None
-        info = _repo_task(root, ctx.salt) if os.path.isdir(root) else None
-        if info:
-            return info["repo"], info["task"]
-        common = root  # repo no longer on disk: stable per-repo/branch identity from recorded path
-        repo = _sha(ctx.salt, os.path.basename(root.rstrip("/\\")))[:12]
-        return repo, _sha(ctx.salt, common, "\n", branch)[:12]
-    repo_name = os.path.basename(os.path.dirname(common.rstrip("/\\"))) \
-        if common.rstrip("/\\").endswith(".git") else os.path.basename(common.rstrip("/\\"))
-    return _sha(ctx.salt, repo_name)[:12], _sha(ctx.salt, common, "\n", branch)[:12]
+        root = root.strip()
+        out = _local_git(root, "rev-parse", "--git-common-dir") if os.path.isdir(root) else None
+        if out:
+            common_abs = _norm_path(os.path.join(root, out.splitlines()[0].strip()))
+        else:  # repo no longer on disk: stable per-repo/branch identity from the recorded path
+            root_norm = root.replace("\\", "/").rstrip("/")
+            return (_sha(ctx.salt, os.path.basename(root_norm))[:12],
+                    _sha(ctx.salt, root_norm, "\n", branch)[:12])
+    origin = _local_git(common_abs, "config", "--get", "remote.origin.url") \
+        if os.path.isdir(common_abs) else None
+    return _keys(ctx.salt, common_abs, branch, origin)
 
 
 def _conv_review(ctx: _Ctx, row: dict, raw: str, state: dict, aux: dict) -> dict | None:
@@ -677,14 +738,14 @@ def _conv_review(ctx: _Ctx, row: dict, raw: str, state: dict, aux: dict) -> dict
             prev = state["review_ts"].get(rt[1])
             if not prev or ts > prev:
                 state["review_ts"][rt[1]] = ts
-    return ctx.build("review", data, ts, "code-review-gates", raw, rt)
+    return ctx.build("review", data, ts, "code-review-gates", raw, rt, aux.get("locator", ""))
 
 
 def _conv_correction(ctx: _Ctx, row: dict, raw: str, state: dict, aux: dict) -> dict | None:
     ts = _norm_ts(row.get("ts"))
     if not ts:
         return None
-    return ctx.build("correction", {}, ts, "corrections", raw, ctx.repo_task(row.get("cwd")))
+    return ctx.build("correction", {}, ts, "corrections", raw, ctx.repo_task(row.get("cwd")), aux.get("locator", ""))
 
 
 def _conv_recall(ctx: _Ctx, row: dict, raw: str, state: dict, aux: dict) -> dict | None:
@@ -693,7 +754,7 @@ def _conv_recall(ctx: _Ctx, row: dict, raw: str, state: dict, aux: dict) -> dict
     if not ts or not isinstance(card, str):
         return None
     data = {"card": _hash_name(ctx, card), "level": aux.get("levels", {}).get(card)}
-    return ctx.build("lesson_recall", data, ts, "recalls", raw, ctx.repo_task(row.get("cwd")))
+    return ctx.build("lesson_recall", data, ts, "recalls", raw, ctx.repo_task(row.get("cwd")), aux.get("locator", ""))
 
 
 def _conv_card(ctx: _Ctx, row: dict, raw: str, state: dict, aux: dict) -> dict | None:
@@ -706,7 +767,7 @@ def _conv_card(ctx: _Ctx, row: dict, raw: str, state: dict, aux: dict) -> dict |
         "scope_kind": "global" if scope in (None, "", "global") else "path",
         "status": row.get("status"), "created": row.get("created"),
     }
-    return ctx.build("lesson_card", data, _iso(_now()), "cards", raw, None)
+    return ctx.build("lesson_card", data, _iso(_now()), "cards", raw, None, cid)
 
 
 _OFFSET_SOURCES = (
@@ -718,8 +779,9 @@ _OFFSET_SOURCES = (
 )
 
 
-def _read_new_lines(path: Path, offset: int) -> tuple[list[str], int]:
-    """Complete lines after `offset` (CRLF tolerant) and the new offset. Truncated file restarts."""
+def _read_new_lines(path: Path, offset: int) -> tuple[list[tuple[int, str]], int]:
+    """Complete (byte_offset, line) pairs after `offset` (CRLF tolerant) and the new offset.
+    Truncated file restarts."""
     size = path.stat().st_size
     if offset > size or offset < 0:
         offset = 0
@@ -730,8 +792,14 @@ def _read_new_lines(path: Path, offset: int) -> tuple[list[str], int]:
     if end < 0:
         return [], offset
     body = chunk[: end + 1]
-    lines = [ln.strip("\r") for ln in body.decode("utf-8", "replace").split("\n")]
-    return [ln for ln in lines if ln.strip()], offset + len(body)
+    lines: list[tuple[int, str]] = []
+    pos = offset
+    for piece in body.split(b"\n")[:-1]:
+        line = piece.decode("utf-8", "replace").strip("\r")
+        if line.strip():
+            lines.append((pos, line))
+        pos += len(piece) + 1
+    return lines, offset + len(body)
 
 
 def _parse_row(raw: str) -> dict | None:
@@ -773,10 +841,11 @@ def _collect_locked(claude_dir: Path, team: dict) -> int:
             lines, new_off = _read_new_lines(path, int(state["offsets"].get(key, 0) or 0))
         except OSError:
             continue
-        for raw in lines:
+        for line_off, raw in lines:
             row = _parse_row(raw)
             if row is None:
                 continue
+            aux["locator"] = line_off
             event = conv(ctx, row, raw, state, aux)
             if event is not None:
                 _spool_write(claude_dir, event)
@@ -788,11 +857,12 @@ def _collect_locked(claude_dir: Path, team: dict) -> int:
     seen = set(state["cards_seen"])
     current: list[str] = []
     for raw in card_lines:
-        eid = ctx.event_id("cards", raw)
+        row = _parse_row(raw)
+        cid = row.get("id") if row else ""
+        eid = ctx.event_id("cards", raw, cid)
         current.append(eid)
         if eid in seen:
             continue
-        row = _parse_row(raw)
         event = _conv_card(ctx, row, raw, state, aux) if row else None
         if event is not None:
             _spool_write(claude_dir, event)
@@ -923,15 +993,14 @@ def _has_head(repo: Path, prefix: list[str]) -> bool:
 
 
 def _clone(tdir: Path, prefix: list[str], team: dict, repo: Path) -> None:
-    import shutil
     branch = team["branch"]
-    proc = _run(tdir, prefix, ["clone", "--depth", "1", "-b", branch, team["collect_repo"], str(repo)],
+    proc = _run(tdir, prefix, ["clone", "--depth", "1", "-b", branch, "--", team["collect_repo"], str(repo)],
                 check=False, category="clone")
     if proc.returncode == 0:
         return
     shutil.rmtree(repo, ignore_errors=True)
     # An empty remote has no branch to check out: clone plainly and start the branch locally.
-    _run(tdir, prefix, ["clone", team["collect_repo"], str(repo)], check=True, category="clone")
+    _run(tdir, prefix, ["clone", "--", team["collect_repo"], str(repo)], check=True, category="clone")
     if not _has_head(repo, prefix):
         _run(repo, prefix, ["checkout", "-B", branch], check=True, category="clone")
     else:
@@ -941,10 +1010,10 @@ def _clone(tdir: Path, prefix: list[str], team: dict, repo: Path) -> None:
 
 def _reset_to_remote(repo: Path, prefix: list[str], branch: str) -> None:
     _run(repo, prefix, ["rebase", "--abort"], check=False, category="git")
-    heads = _run(repo, prefix, ["ls-remote", "--heads", "origin", branch], check=True, category="network")
+    heads = _run(repo, prefix, ["ls-remote", "--heads", "--", "origin", branch], check=True, category="network")
     if not (heads.stdout or "").strip():
         return  # empty remote: nothing to reset to, local commits are pushed as the first history
-    _run(repo, prefix, ["fetch", "origin", f"+refs/heads/{branch}:refs/remotes/origin/{branch}"],
+    _run(repo, prefix, ["fetch", "--", "origin", f"+refs/heads/{branch}:refs/remotes/origin/{branch}"],
          check=True, category="network")
     _run(repo, prefix, ["reset", "--hard", f"origin/{branch}"], check=True, category="reset")
 
@@ -952,7 +1021,6 @@ def _reset_to_remote(repo: Path, prefix: list[str], branch: str) -> None:
 def _prepare_repo(tdir: Path, prefix: list[str], team: dict, repo: Path) -> None:
     branch = team["branch"]
     if not (repo / ".git").exists():
-        import shutil
         shutil.rmtree(repo, ignore_errors=True)
         _clone(tdir, prefix, team, repo)
         return
@@ -963,7 +1031,7 @@ def _prepare_repo(tdir: Path, prefix: list[str], team: dict, repo: Path) -> None
     _run(repo, prefix, ["remote", "set-url", "origin", team["collect_repo"]], check=False, category="git")
     if not _has_head(repo, prefix):
         return
-    proc = _run(repo, prefix, ["pull", "--rebase", "origin", branch], check=False, category="pull")
+    proc = _run(repo, prefix, ["pull", "--rebase", "--", "origin", branch], check=False, category="pull")
     if proc.returncode != 0:
         _reset_to_remote(repo, prefix, branch)
 
@@ -978,7 +1046,7 @@ def _merge_spool(claude_dir: Path, repo: Path, ident: dict, state: dict) -> tupl
             offset = state["upload_offsets"].get(f.name, 0)
             lines, new_off = _read_new_lines(f, offset if isinstance(offset, int) else 0)
             new_offsets[f.name] = new_off
-            for raw in lines:
+            for _off, raw in lines:
                 row = _parse_row(raw)
                 clean = sanitize(row) if row else None
                 if clean:
@@ -1030,7 +1098,7 @@ def _push(claude_dir: Path, repo: Path, prefix: list[str], team: dict, ident: di
             return merged, offsets
         if attempt == PUSH_ATTEMPTS - 1:
             break
-        pull = _run(repo, prefix, ["pull", "--rebase", "origin", branch], check=False, category="pull")
+        pull = _run(repo, prefix, ["pull", "--rebase", "--", "origin", branch], check=False, category="pull")
         if pull.returncode != 0:
             _reset_to_remote(repo, prefix, branch)
             merged, offsets = _merge_spool(claude_dir, repo, ident, state)
@@ -1078,16 +1146,32 @@ def run_report(claude_dir: Path, *, force: bool = False) -> dict:
         return _result("failed", "internal")
 
 
+def _is_due(team: dict, state: dict, now: _dt.datetime) -> bool:
+    success = _parse_iso(state.get("last_success"))
+    if success and (now - success).total_seconds() < team["upload_interval_hours"] * 3600:
+        return False
+    attempt = _parse_iso(state.get("last_attempt"))
+    if attempt and (now - attempt).total_seconds() < ATTEMPT_MIN_INTERVAL_SECONDS:
+        return False
+    return True
+
+
+def due(claude_dir: Path) -> bool:
+    """True when a report is due. Reads team.json and state.json only, never the spool."""
+    try:
+        team = load_team(claude_dir)
+        if team is None:
+            return False
+        return _is_due(team, _load_state(claude_dir), _now())
+    except Exception:
+        return False
+
+
 def _report_locked(claude_dir: Path, team: dict, tdir: Path, force: bool) -> dict:
     state = _load_state(claude_dir)
     now = _now()
-    if not force:
-        success = _parse_iso(state.get("last_success"))
-        if success and (now - success).total_seconds() < team["upload_interval_hours"] * 3600:
-            return _result("skipped", "throttled")
-        attempt = _parse_iso(state.get("last_attempt"))
-        if attempt and (now - attempt).total_seconds() < ATTEMPT_MIN_INTERVAL_SECONDS:
-            return _result("skipped", "throttled")
+    if not force and not _is_due(team, state, now):
+        return _result("skipped", "throttled")
     state["last_attempt"] = _iso(now)
     try:
         _save_state(claude_dir, state)

@@ -16,7 +16,7 @@ LOCAL = "127.0.0" + ".1:8317"
 
 
 def base(etype, **kw):
-    ev = {"schema": 1, "type": etype, "ts": TS, "event_id": "ab" * 8, "team": "team1", "user": "u1"}
+    ev = {"schema": 1, "type": etype, "ts": TS, "event_id": "ab" * 8, "team": "team1", "user": "cd" * 8}
     ev.update(kw)
     return ev
 
@@ -88,3 +88,14 @@ def test_hash_fields_hex_only():
 def test_windows_paths_never_survive_in_free_text_fields():
     out = tel.sanitize(base("verify_probe", overall=WIN_HOME, layers=["unit"], failed_layers=[WIN_HOME]))
     assert "overall" not in out and "failed_layers" not in out and out["layers"] == ["unit"]
+
+
+def test_user_hash_containing_mobile_digits_is_kept_but_free_form_user_rejected():
+    digits = "138" + "12345678"
+    hashed = digits + "abcde"
+    ok = tel.sanitize(base("correction", user=hashed))
+    assert ok is not None and ok["user"] == hashed
+    anon = tel.sanitize(base("correction", user="anon-" + hashed))
+    assert anon is not None and anon["user"] == "anon-" + hashed
+    for bad in ("u1", digits, "ABCDEF0123456789", "anon-xyz", "cd" * 9, hashed + "\n"):
+        assert tel.sanitize(base("correction", user=bad)) is None

@@ -106,3 +106,39 @@ def test_task_key_same_origin_shares_repo_hash(claude, team, tmp_path):
 def test_origin_forms_normalised():
     n = tel._norm_origin
     assert n("git@host.test:org/app.git") == n("https://host.test/org/app")
+
+
+def test_anonymous_email_lookup_retried_at_most_hourly(claude, team, monkeypatch):
+    calls = []
+    monkeypatch.setattr(tel, "_git_email", lambda: calls.append(1) or "")
+    first = tel.identity(claude, team)
+    assert first["user"].startswith("anon-") and len(calls) == 1
+    for _ in range(5):
+        tel.identity(claude, team)
+    assert len(calls) == 1
+    path = claude / "aicj" / "telemetry" / "identity.json"
+    data = json.loads(path.read_text(encoding="utf-8"))
+    assert data["email_checked"] > 0
+    data["email_checked"] -= tel.EMAIL_RETRY_SECONDS + 5
+    path.write_text(json.dumps(data), encoding="utf-8")
+    assert tel.identity(claude, team)["user"].startswith("anon-")
+    assert len(calls) == 2
+    monkeypatch.setattr(tel, "_git_email", lambda: calls.append(1) or "dev" + "@example.test")
+    data["email_checked"] -= tel.EMAIL_RETRY_SECONDS + 5
+    path.write_text(json.dumps(data), encoding="utf-8")
+    assert not tel.identity(claude, team)["user"].startswith("anon-")
+
+
+def test_load_team_rejects_dash_repo_and_unsafe_branch(claude, remote):
+    assert tel.load_team(claude) is None
+    write_team(claude, remote)
+    assert tel.load_team(claude) is not None
+    for branch in ("-x", "a b", "a..b", "a~1", "a^", "a:b", "a?", "a*", "a[", "a\\b", "x.lock", "a/"):
+        write_team(claude, remote, branch=branch)
+        assert tel.load_team(claude) is None, branch
+    write_team(claude, remote, branch="feature/ok-1")
+    assert tel.load_team(claude)["branch"] == "feature/ok-1"
+    write_team(claude, "--upload-pack=evil")
+    assert tel.load_team(claude) is None
+    write_team(claude, remote, team_id="team1\n")
+    assert tel.load_team(claude) is None

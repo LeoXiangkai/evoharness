@@ -104,7 +104,7 @@ def test_rewritten_remote_history_recovers(claude, team, remote, tmp_path):
     res = tel.run_report(claude, force=True)
     assert res["status"] == "ok", res
     evs = [e for v in remote_files(remote).values() for e in _lines(v)]
-    assert len(evs) >= 1
+    assert len(evs) == 1
     assert tel.status(claude)["last_error"] is None
 
 
@@ -272,3 +272,77 @@ def test_empty_remote_first_push_failure_then_catches_up(claude, tmp_path, monke
     res = tel.run_report(claude, force=True)
     assert res["status"] == "ok", res
     assert len(remote_files(empty)) == 1
+
+
+def test_converted_event_ids_survive_telemetry_dir_wipe(claude, team, remote, tmp_path):
+    _corrections(claude)
+    write_log(claude / "aicj/review-logs/code-review-gates.jsonl", [
+        {"ts": "2026-10-27T10:00:00+00:00", "kind": "outcome", "common_dir": str(tmp_path / "x" / ".git"),
+         "branch": "feature/q", "reviewers": 1, "findings": 0, "confirmed": 0, "review_gate": "required"}])
+    tel.collect(claude)
+    assert tel.run_report(claude, force=True)["status"] == "ok"
+
+    def ids():
+        out = set()
+        for text in remote_files(remote).values():
+            out |= {e["event_id"] for e in _lines(text)}
+        return out
+
+    before = ids()
+    assert len(before) == 3
+    shutil.rmtree(claude / "aicj" / "telemetry")
+    tel.collect(claude)
+    assert tel.run_report(claude, force=True)["status"] == "ok"
+    assert ids() == before
+
+
+def test_stale_lock_threshold_and_atomic_steal(claude, team):
+    tdir = claude / "aicj" / "telemetry"
+    tdir.mkdir(parents=True, exist_ok=True)
+    assert tel.LOCK_STALE_SECONDS == 1800
+    lock = tdir / "report.lock"
+    lock.write_text("1")
+    ten_min = time.time() - 600
+    os.utime(lock, (ten_min, ten_min))
+    assert tel._acquire_lock(tdir) is False
+    old = time.time() - tel.LOCK_STALE_SECONDS - 60
+    os.utime(lock, (old, old))
+    assert tel._acquire_lock(tdir) is True
+    assert lock.exists() and time.time() - lock.stat().st_mtime < 60
+    assert not list(tdir.glob("report.lock.stale.*"))
+    assert tel._acquire_lock(tdir) is False
+
+
+def test_due_reads_only_team_and_state(claude, team):
+    assert tel.due(claude) is True
+    _corrections(claude)
+    tel.run_report(claude, force=True)
+    assert tel.due(claude) is False
+    state = tel._load_state(claude)
+    state["last_success"] = "2020-01-01T00:00:00Z"
+    state["last_attempt"] = "2020-01-01T00:00:00Z"
+    tel._save_state(claude, state)
+    assert tel.due(claude) is True
+    state["last_attempt"] = tel._iso(tel._now())
+    tel._save_state(claude, state)
+    assert tel.due(claude) is False
+    (claude / "aicj" / "team.json").unlink()
+    assert tel.due(claude) is False
+
+
+def test_git_clone_separates_repo_positional_with_double_dash(claude, team, monkeypatch):
+    seen = []
+    real = tel._run
+
+    def spy(repo, prefix, args, **kw):
+        seen.append(list(args))
+        return real(repo, prefix, args, **kw)
+
+    monkeypatch.setattr(tel, "_run", spy)
+    _corrections(claude)
+    assert tel.run_report(claude, force=True)["status"] == "ok"
+    clones = [a for a in seen if a[0] == "clone"]
+    assert clones and all("--" in a and a.index("--") < a.index(team["collect_repo"]) for a in clones)
+    for a in seen:
+        if a[0] in ("fetch", "pull", "ls-remote"):
+            assert "--" in a

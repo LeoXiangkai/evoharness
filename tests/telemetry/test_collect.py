@@ -35,7 +35,7 @@ def test_collect_real_formats_and_idempotent(claude, team, tmp_path):
         {"ts": "2026-10-27T10:03:00Z", "card": "card-1", "session_id": "s1", "cwd": str(repo)}])
 
     n = tel.collect(claude)
-    assert n >= 6
+    assert n == 6
     evs = spool_events(claude)
     types = sorted(e["type"] for e in evs)
     for t in ("hook_gate", "correction", "lesson_card", "lesson_recall"):
@@ -151,3 +151,56 @@ def test_windows_backslash_cwd_and_repo_root_do_not_leak(claude, team):
     assert tel.collect(claude) == 2
     blob = json.dumps(spool_events(claude))
     assert "alice" not in blob and "Users" not in blob
+
+
+def test_emit_event_id_optional_keyword(claude, team):
+    assert tel.emit(claude, "correction", {}, event_id="ab" * 16) is True
+    assert tel.emit(claude, "correction", {}, event_id="NOT HEX") is True
+    assert tel.emit(claude, "correction", {}, event_id=None) is True
+    ids = [e["event_id"] for e in spool_events(claude)]
+    assert ids[0] == "ab" * 16
+    assert len(ids[1]) == 32 and ids[1] != "NOT HEX" and len(ids[2]) == 32 and ids[1] != ids[2]
+
+
+def test_review_rows_share_task_key_and_snapshot_sees_review(claude, team, tmp_path):
+    repo = tmp_path / "proj"
+
+    def g(*a):
+        subprocess.run(["git", "-C", str(repo), "-c", "user.name=t", "-c", "user.email=t@x.test", *a],
+                       check=True, capture_output=True)
+
+    subprocess.run(["git", "init", "-q", "-b", "main", str(repo)], check=True)
+    g("remote", "add", "origin", "git@host.test:org/app.git")
+    (repo / "a").write_text("1")
+    g("add", "-A")
+    g("commit", "-qm", "base")
+    g("checkout", "-q", "-b", "feature/r")
+    (repo / "a").write_text("2")
+    g("add", "-A")
+    g("commit", "-qm", "c1")
+    key = tel.task_key(claude, str(repo), team)
+    assert key is not None
+    g("checkout", "-q", "main")  # HEAD differs from the branch recorded in the rows
+    common = str(repo / ".git")
+    base = {"files": ["a"], "lines": 1, "review_gate": "required", "branch": "feature/r"}
+    write_log(claude / LOGS / "code-review-gates.jsonl", [
+        dict(base, ts="2026-10-27T10:00:00+00:00", kind="gate", common_dir=common),
+        dict(base, ts="2026-10-27T10:01:00+00:00", kind="gate", repo_root=str(repo)),
+        dict(base, ts="2026-10-27T10:02:00+00:00", kind="outcome", common_dir=common,
+             reviewers=1, findings=0, confirmed=0),
+    ])
+    tel.collect(claude)
+    rev = [e for e in spool_events(claude) if e["type"] == "review"]
+    assert len(rev) == 3
+    assert {(e["repo"], e["task"]) for e in rev} == {key}
+    g("checkout", "-q", "feature/r")
+    (repo / "a").write_text("3")
+    g("add", "-A")
+    g("commit", "-qm", "c2")
+    state = tel._load_state(claude)
+    assert state["review_ts"][key[1]]
+    state["snapshots"] = {}
+    tel._save_state(claude, state)
+    tel.collect(claude)
+    snaps = [e for e in spool_events(claude) if e["type"] == "task_snapshot"]
+    assert snaps and snaps[-1]["commits_after_review"] > 0

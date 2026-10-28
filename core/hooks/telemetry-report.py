@@ -6,44 +6,16 @@ Does nothing unless <claude>/aicj/team.json exists.
 """
 from __future__ import annotations
 
-import datetime as dt
 import os
 import subprocess
 import sys
 from pathlib import Path
-
-ATTEMPT_MIN_SECONDS = 3600
-
 
 def _claude_dir() -> Path:
     env = os.environ.get("AICJ_CLAUDE_DIR")
     if env:
         return Path(env).expanduser().resolve()
     return Path(__file__).resolve().parents[2]
-
-
-def _age_seconds(value: object) -> float | None:
-    if not isinstance(value, str) or not value.strip():
-        return None
-    try:
-        text = value.strip().replace("Z", "+00:00")
-        parsed = dt.datetime.fromisoformat(text)
-        if parsed.tzinfo is None:
-            parsed = parsed.replace(tzinfo=dt.timezone.utc)
-        return (dt.datetime.now(dt.timezone.utc) - parsed).total_seconds()
-    except ValueError:
-        return None
-
-
-def _due(info: dict) -> bool:
-    if not info.get("enabled"):
-        return False
-    attempt = _age_seconds(info.get("last_attempt"))
-    if attempt is not None and attempt < ATTEMPT_MIN_SECONDS:
-        return False
-    success = _age_seconds(info.get("last_success"))
-    interval = float(info.get("upload_interval_hours") or 24) * 3600
-    return success is None or success >= interval
 
 
 def _spawn() -> None:
@@ -68,7 +40,7 @@ def main() -> None:
         tel.collect(claude)
         tel.run_report(claude)
         return
-    if _due(tel.status(claude)):
+    if tel.due(claude):
         _spawn()
 
 
