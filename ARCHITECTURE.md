@@ -1,6 +1,6 @@
 # 架构图与流程图
 
-本文用 Mermaid 描述 ai-coding-java 的组成与运行流程。安装行为的权威契约是 [全局安装设计](docs/global-install-design.md)，阶段门见 [阶段门设计](docs/lifecycle-gates-design.md)；图与文字冲突时以这两份为准。
+本文用 Mermaid 描述 EvoHarness（ai-coding-java）的组成与运行流程。安装行为的权威契约是 [全局安装设计](docs/global-install-design.md)，阶段门见 [阶段门设计](docs/lifecycle-gates-design.md)；图与文字冲突时以这两份为准。
 
 ## 1. 总体架构
 

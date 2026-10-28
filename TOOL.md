@@ -1,4 +1,4 @@
-# ai-coding-java Tooling Contract
+# EvoHarness (ai-coding-java) Tooling Contract
 
 全局安装入口见 [README](README.md)，安装结构与行为以 [global-install-design](docs/global-install-design.md) 为准。本文保留项目档案层用法；全局 `core/`、`packs/`、`adapters/` 由 `installer/aicj.py` 安装。
 

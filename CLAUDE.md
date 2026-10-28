@@ -1,4 +1,4 @@
-# ai-coding-java Claude Code Entry
+# EvoHarness (ai-coding-java) Claude Code Entry
 
 Read `AGENTS.md` for project execution constraints; Codex reads that entry.
 

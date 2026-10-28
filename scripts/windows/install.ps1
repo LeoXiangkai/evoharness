@@ -7,7 +7,7 @@ param(
     [switch]$NoClaude,
     [switch]$NoHud,
     [switch]$NoCcLauncher,
-    [string]$RepoUrl = "https://github.com/LeoXiangkai/ai-coding-java.git",
+    [string]$RepoUrl = "https://github.com/LeoXiangkai/evoharness.git",
     [ValidateSet("cc", "worker")]
     [string]$Mode = "cc",
     [string]$CpaUrl = "http://127.0.0.1:8317",
@@ -151,7 +151,7 @@ try {
         if ($PSScriptRoot) {
             $RepoDir = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
         } else {
-            $RepoDir = Join-Path $HOME "src\ai-coding-java"
+            $RepoDir = Join-Path $HOME "src\evoharness"
         }
     }
     $RepoDir = [IO.Path]::GetFullPath($RepoDir)

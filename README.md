@@ -1,8 +1,8 @@
-# ai-coding-java
+# EvoHarness
 
 **EvoHarness**：AI Coding 规则 + Harness 约束 + 自进化循环（使用记录采集 → 管理员复盘 → 框架改进）。
 
-可复用的 AI Coding 全局安装组件与项目档案工具。仓库名保留，能力覆盖 Java、Python、Vue：统一规则路由、需求与设计流程、验证证据、交付模板和轻量 Git 保护。
+可复用的 AI Coding 全局安装组件与项目档案工具（原名 ai-coding-java；运行时标识 `aicj`、`.ai-coding-java/` 保持不变）。能力覆盖 Java、Python、Vue：统一规则路由、需求与设计流程、验证证据、交付模板和轻量 Git 保护。
 
 ## 两层职责
 
@@ -71,10 +71,10 @@ python3 installer/aicj.py uninstall
 首选一键脚本。在 PowerShell 中运行下面一行即可自动安装 Git、Python、Claude Code，获取仓库，安装 aicj 并执行 selftest。远程 `iex` 写法用 scriptblock，执行结束后不会关闭当前窗口：
 
 ```powershell
-& ([scriptblock]::Create((irm https://raw.githubusercontent.com/LeoXiangkai/ai-coding-java/main/scripts/windows/install.ps1).TrimStart([char]0xFEFF)))
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/LeoXiangkai/evoharness/main/scripts/windows/install.ps1).TrimStart([char]0xFEFF)))
 ```
 
-带参数时同样保留 scriptblock 调用形式，例如：`& ([scriptblock]::Create((irm https://raw.githubusercontent.com/LeoXiangkai/ai-coding-java/main/scripts/windows/install.ps1).TrimStart([char]0xFEFF))) -Mode worker -CpaToken $env:CPA_TOKEN`。
+带参数时同样保留 scriptblock 调用形式，例如：`& ([scriptblock]::Create((irm https://raw.githubusercontent.com/LeoXiangkai/evoharness/main/scripts/windows/install.ps1).TrimStart([char]0xFEFF))) -Mode worker -CpaToken $env:CPA_TOKEN`。
 
 已经克隆仓库时，在仓库根目录运行：
 
@@ -100,8 +100,8 @@ powershell -ExecutionPolicy Bypass -File scripts\windows\install-cpa.ps1
 
 ```powershell
 cd ~
-git clone https://github.com/LeoXiangkai/ai-coding-java.git
-cd ai-coding-java
+git clone https://github.com/LeoXiangkai/evoharness.git
+cd evoharness
 py -3 installer/aicj.py install --dry-run
 py -3 installer/aicj.py install
 py -3 installer/aicj.py doctor

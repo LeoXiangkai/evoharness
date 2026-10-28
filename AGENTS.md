@@ -1,4 +1,4 @@
-# ai-coding-java Project Contract
+# EvoHarness (ai-coding-java) Project Contract
 
 Codex reads this entry; Claude Code reads `CLAUDE.md`.
 
