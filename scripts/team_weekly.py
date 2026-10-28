@@ -167,9 +167,9 @@ def compute_metrics(events: list[dict], min_n: int) -> dict[str, dict]:
         out["gate_deny:" + tag] = {"value": denies[tag], "n": None}
     for card, row in agg.by_lesson_card(events).items():
         out["card_corrections_ratio:" + card] = _ratio(row["corrections_after_recall"], row["recalls"], min_n)
-    corrections = [e for e in events if e["type"] == "correction"]
+    corrections = _classified_corrections(events)
     for cause in tel.REWORK_CAUSES:
-        out["rework_share:" + cause] = _ratio(sum(1 for e in corrections if (e.get("cause") or "G") == cause),
+        out["rework_share:" + cause] = _ratio(sum(1 for e in corrections if e.get("cause") == cause),
                                               len(corrections), min_n)
     asks = agg.ask_user_summary(events)
     out["ask_user_per_task_day"] = _ratio(asks["questions"], asks["task_days"], min_n)
@@ -459,14 +459,19 @@ def idle_cards(all_events: list[dict], end: dt.datetime) -> list[dict]:
             if latest[c].get("status") == "active" and c not in recalled and first_seen[c] <= lo]
 
 
+def _classified_corrections(events: list[dict]) -> list[dict]:
+    """Corrections carrying a rule version; ones collected before the rules shipped have no cause and are left out."""
+    return [e for e in events if e["type"] == "correction" and e.get("cause_rules") and e.get("cause")]
+
+
 def rework_g_alert(cur: list[dict], prev: list[dict], min_n: int) -> dict | None:
-    """G (unclassified) share of corrections above G_SHARE_ALERT in both weeks, each with n >= min_n."""
+    """G (unclassified) share of classified corrections above G_SHARE_ALERT in both weeks, each with n >= min_n."""
     shares = []
     for events in (cur, prev):
-        corr = [e for e in events if e["type"] == "correction"]
+        corr = _classified_corrections(events)
         if len(corr) < min_n or not corr:
             return None
-        shares.append(sum(1 for e in corr if (e.get("cause") or "G") == "G") / len(corr))
+        shares.append(sum(1 for e in corr if e["cause"] == "G") / len(corr))
     if all(x > G_SHARE_ALERT for x in shares):
         return {"this": shares[0], "prev": shares[1]}
     return None
@@ -480,7 +485,7 @@ def idle_skills(all_events: list[dict], end: dt.datetime) -> list[str]:
     hi = _fmt_ts(end)
     lo = _fmt_ts(end - dt.timedelta(weeks=IDLE_WEEKS))
     uses = [e for e in all_events if e["type"] == "skill_use" and e["ts"] < hi]
-    if not uses:
+    if not uses or min(e["ts"] for e in uses) >= lo:  # the 4-week window is not yet covered by collected data
         return []
     used = {e.get("skill") for e in uses if e["ts"] >= lo}
     return sorted(tel.KNOWN_SKILLS - used)

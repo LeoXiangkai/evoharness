@@ -204,9 +204,9 @@ def test_aggregate_signal_families():
 
 def test_g_share_alert_needs_two_weeks_above_half():
     this = sane(_signal_rows())
-    prev_hi = sane([ev(500 + i, "correction", "2026-10-14T10:00:00Z", cause="G" if i < 15 else "A")
+    prev_hi = sane([ev(500 + i, "correction", "2026-10-14T10:00:00Z", cause="G" if i < 15 else "A", cause_rules="r1")
                     for i in range(20)])
-    prev_lo = sane([ev(600 + i, "correction", "2026-10-14T10:00:00Z", cause="G" if i < 10 else "A")
+    prev_lo = sane([ev(600 + i, "correction", "2026-10-14T10:00:00Z", cause="G" if i < 10 else "A", cause_rules="r1")
                     for i in range(20)])
     assert tw.rework_g_alert(this, prev_hi, 20) == {"this": pytest.approx(0.6), "prev": pytest.approx(0.75)}
     assert tw.rework_g_alert(this, prev_lo, 20) is None
@@ -265,3 +265,28 @@ def test_skill_log_failure_keeps_correction_and_hook_silent(claude, team, monkey
     monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps(
         {"hook_event_name": "PostToolUse", "tool_name": "Skill", "tool_input": {"skill": "prd"}})))
     cap.main()  # must return normally: no exception escapes the new signal path
+
+
+def test_idle_skills_wait_until_collection_covers_the_window():
+    end = dt.datetime(2026, 10, 26, tzinfo=dt.timezone.utc)
+    recent_only = sane([ev(1, "skill_use", "2026-10-20T10:00:00Z", skill="prd", via="tool")])
+    assert tw.idle_skills(recent_only, end) == []
+
+
+def test_corrections_collected_before_rules_are_left_out_of_rework_metrics():
+    legacy = [ev(700 + i, "correction", "2026-10-21T10:00:00Z") for i in range(30)]
+    m = metrics_for(_signal_rows() + legacy, min_n=20)
+    assert m["rework_share:G"]["n"] == 20 and m["rework_share:G"]["value"] == pytest.approx(0.6)
+    old_weeks = sane(legacy)
+    assert tw.rework_g_alert(old_weeks, old_weeks, 20) is None
+
+
+def test_hook_process_exits_zero_when_skill_log_is_unwritable(claude, team):
+    (claude / "aicj" / "telemetry").mkdir(parents=True, exist_ok=True)
+    (claude / SKILL_LOG).mkdir()
+    for payload in ({"hook_event_name": "PostToolUse", "tool_name": "Skill", "session_id": "s1",
+                     "tool_use_id": "t1", "tool_input": {"skill": "prd"}},
+                    {"hook_event_name": "UserPromptSubmit", "session_id": "s1", "prompt": "/prd go"}):
+        r = run_hook(claude, payload)
+        assert (r.returncode, r.stdout) == (0, "")
+    assert [e["via"] for e in spool_events(claude) if e["type"] == "skill_use"] == ["tool", "slash"]
