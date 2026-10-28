@@ -158,3 +158,32 @@ def test_same_tool_call_shares_event_id_across_post_events(claude, team):
     runs = [e for e in spool_events(claude) if e["type"] == "test_run"]
     assert len(runs) == 2
     assert len({e["event_id"] for e in runs}) == 1
+
+
+MVN_REACTOR = """\
+[INFO] Results:
+[INFO]
+[INFO] Tests run: 10, Failures: 1, Errors: 0, Skipped: 2
+[INFO]
+[INFO] --- surefire:3.0 (default-test) @ b ---
+[ERROR] Results:
+[ERROR]
+[ERROR] Tests run: 5, Failures: 0, Errors: 1, Skipped: 0
+"""
+
+
+def test_maven_sums_reactor_modules():
+    pos, row = cap._maven(MVN_REACTOR)
+    # run 15, failed 1, errors 1, skipped 2 -> passed 11
+    assert (row["passed"], row["failed"], row["skipped"], row["errors"]) == (11, 1, 2, 1)
+
+
+def test_maven_without_results_header_uses_last_summary():
+    pos, row = cap._maven("Tests run: 3, Failures: 0, Errors: 0, Skipped: 0\nTests run: 4, Failures: 1, Errors: 0, Skipped: 0\n")
+    assert row["failed"] == 1
+
+
+@pytest.mark.parametrize("cmd", ["mvn.cmd test", "mvnw.cmd verify", "MVN.CMD test", "gradle.bat build",
+                                 "gradlew.bat test", "py -m pytest", "py -3 -m pytest -q", "PYTHON.EXE -m pytest"])
+def test_windows_test_command_names(cmd):
+    assert cap.is_test_command(cmd)

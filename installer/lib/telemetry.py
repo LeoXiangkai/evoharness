@@ -9,6 +9,8 @@ import importlib.util
 import json
 import os
 import re
+import shutil
+import stat
 import subprocess
 import sys
 import urllib.request
@@ -168,5 +170,31 @@ def uninstall_report(home: Path, source: Path | None, timeout: int = 60) -> None
         subprocess.run([sys.executable, str(script), "report", "--force"], env=env, timeout=timeout,
                        stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                        check=False)
+    except Exception:
+        return
+
+
+def _force_rmtree(path: Path) -> None:
+    def _onerror(func, p, _exc):  # Windows: git marks objects read-only
+        try:
+            os.chmod(p, stat.S_IWRITE)
+            func(p)
+        except OSError:
+            pass
+    shutil.rmtree(path, onerror=_onerror)
+
+
+def remove_collect_artifacts(home: Path) -> None:
+    """Uninstall: drop the collect-repo clone (whole team's data) and the report lock; keep spool/state/identity."""
+    try:
+        tdir = home / ".claude" / "aicj" / "telemetry"
+        repo = tdir / "collect-repo"
+        if repo.is_dir() and not repo.is_symlink():
+            _force_rmtree(repo)
+        lock = tdir / "report.lock"
+        if lock.is_dir() and not lock.is_symlink():
+            _force_rmtree(lock)
+        elif lock.exists() or lock.is_symlink():
+            lock.unlink()
     except Exception:
         return

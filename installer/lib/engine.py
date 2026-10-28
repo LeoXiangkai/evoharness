@@ -995,6 +995,7 @@ def _run_uninstall(home: Path, dry_run: bool) -> Report:
 
     if not dry_run:
         telemetry.uninstall_report(home, None)  # after validation, before the library and team.json are removed
+        telemetry.remove_collect_artifacts(home)
 
     gone: set[Path] = set()
     kept_dirs: set[Path] = set()

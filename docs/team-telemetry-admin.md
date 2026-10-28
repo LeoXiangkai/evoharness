@@ -35,3 +35,9 @@ The salt is shared by the whole team, so anyone holding it can brute-force a kno
 Members can inspect status with `aicj-telemetry status` and force an upload with `aicj-telemetry report --force`.
 
 Install health events (`install`, `uninstall`, `project_init`) are emitted on failure too (`ok=false`, `error_kind` = exception class name). A failing `--team-config` fetch happens before team.json exists, so it produces no event.
+
+Wiping the telemetry directory of an ANONYMOUS user (no git email) re-keys that user and re-uploads converted history; users with a git email keep a stable hash.
+
+Uploads use `ssh -o BatchMode=yes` unless the member already set `GIT_SSH_COMMAND`, `GIT_SSH` or `core.sshCommand`, in which case their SSH setup is left untouched. Host key checking is not relaxed: the collect host must already be in the member's `known_hosts`.
+
+`aicj uninstall` removes `telemetry/collect-repo/` (a clone of the whole team's data) and `telemetry/report.lock`; spool, state and identity are kept like lesson data.
