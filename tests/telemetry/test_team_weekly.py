@@ -74,8 +74,7 @@ def metrics_for(rows, min_n=20):
     return tw.compute_metrics(sane(rows), min_n)
 
 
-# [T1]
-def test_t1_week_window_boundaries_and_year_crossing():
+def test_week_window_boundaries_and_year_crossing():
     start, end = tw.week_bounds(WEEK)
     assert (start.isoformat(), end.isoformat()) == ("2026-10-19T00:00:00+00:00", "2026-10-26T00:00:00+00:00")
     rows = sane([ev(1, "correction", "2026-10-25T23:59:59Z"), ev(2, "correction", "2026-10-26T00:00:00Z"),
@@ -90,8 +89,7 @@ def test_t1_week_window_boundaries_and_year_crossing():
         tw.parse_week("2021-W53")
 
 
-# [T2]
-def test_t2_ratio_below_min_n_is_null_and_rendered_as_insufficient(tmp_path):
+def test_ratio_below_min_n_is_null_and_rendered_as_insufficient(tmp_path):
     assert metrics_for(green_runs(19, 10))["test_green_rate"] == {"value": None, "n": 19}
     assert metrics_for(green_runs(20, 10))["test_green_rate"] == {"value": 0.5, "n": 20}
     repo = make_repo(tmp_path, {"2026-10-20": green_runs(19, 10)})
@@ -100,49 +98,45 @@ def test_t2_ratio_below_min_n_is_null_and_rendered_as_insufficient(tmp_path):
     assert "样本不足(n=19)" in row
 
 
-# [T3]
 @pytest.mark.parametrize("direction,baseline,current,verdict", [
-    ("down", 0.5, 0.3, "已改善"), ("down", 0.5, 0.5, "持平"), ("down", 0.5, 0.7, "未改善"),
-    ("up", 0.5, 0.7, "已改善"), ("up", 0.5, 0.5, "持平"), ("up", 0.5, 0.3, "未改善"),
+    ("down", 0.5, 0.3, tw.V_IMPROVED), ("down", 0.5, 0.5, tw.V_FLAT), ("down", 0.5, 0.7, tw.V_WORSE),
+    ("up", 0.5, 0.7, tw.V_IMPROVED), ("up", 0.5, 0.5, tw.V_FLAT), ("up", 0.5, 0.3, tw.V_WORSE),
 ])
-def test_t3_trial_verdict_both_directions(direction, baseline, current, verdict):
+def test_trial_verdict_both_directions(direction, baseline, current, verdict):
     t, errs = tw.validate_trial(trial(direction=direction))
     assert not errs
     res = tw.judge_trial(t, {"value": current, "n": 30}, baseline, False)
     assert res["verdict"] == verdict
-    assert tw.judge_trial(t, {"value": None, "n": 3}, baseline, False)["verdict"] == "样本不足"
+    assert tw.judge_trial(t, {"value": None, "n": 3}, baseline, False)["verdict"] == tw.LOW_N
 
 
-# [T4]
-def test_t4_shared_metric_is_not_attributable():
+def test_shared_metric_is_not_attributable():
     a, _ = tw.validate_trial(trial(id="a", shared_metric_with=["b"]))
     b, _ = tw.validate_trial(trial(id="b", shared_metric_with=["a"]))
     trials = {"a": a, "b": b}
     assert tw.sharing_problems(trials) == []
     metrics = {"test_green_rate": {"value": 0.9, "n": 40}}
     due = tw.due_trials(trials, metrics, [], "2026-10-25", 20)
-    assert [d["verdict"] for d in due] == ["不可单独归因", "不可单独归因"]
+    assert [d["verdict"] for d in due] == [tw.V_SHARED, tw.V_SHARED]
     # same metric without mutual registration: still not attributable, and flagged in section 6
     c, _ = tw.validate_trial(trial(id="c"))
     d, _ = tw.validate_trial(trial(id="d"))
     assert len(tw.sharing_problems({"c": c, "d": d})) == 2
-    assert {x["verdict"] for x in tw.due_trials({"c": c, "d": d}, metrics, [], "2026-10-25", 20)} == {"不可单独归因"}
+    assert {x["verdict"] for x in tw.due_trials({"c": c, "d": d}, metrics, [], "2026-10-25", 20)} == {tw.V_SHARED}
 
 
-# [T5]
-def test_t5_deferred_trial_only_keep_or_revoke():
+def test_deferred_trial_only_keep_or_revoke():
     t, _ = tw.validate_trial(trial(deferred=1))
     improved = tw.judge_trial(t, {"value": 0.9, "n": 40}, 0.5, False)
     worse = tw.judge_trial(t, {"value": 0.1, "n": 40}, 0.5, False)
     unknown = tw.judge_trial(t, {"value": None, "n": 4}, 0.5, False)
-    assert (improved["advice"], worse["advice"]) == ("保留", "撤掉")
-    assert "延期" not in unknown["advice"].replace("不可再延期", "") and "保留" in unknown["advice"] and "撤掉" in unknown["advice"]
+    assert (improved["advice"], worse["advice"]) == (tw.A_KEEP, tw.A_REVOKE)
+    assert "延期" not in unknown["advice"].replace("不可再延期", "") and unknown["advice"] == tw.A_DECIDE
     fresh, _ = tw.validate_trial(trial(deferred=0))
     assert "延期" in tw.judge_trial(fresh, {"value": None, "n": 4}, 0.5, False)["advice"]
 
 
-# [T6]
-def test_t6_bad_ledger_rows_are_reported_and_do_not_abort(tmp_path):
+def test_bad_ledger_rows_are_reported_and_do_not_abort(tmp_path):
     good = trial(id="good")
     rows = [
         good,
@@ -163,7 +157,6 @@ def test_t6_bad_ledger_rows_are_reported_and_do_not_abort(tmp_path):
     assert "id=badkey" in tw.render_md(data)
 
 
-# [T7]
 def _deny_rows(tag, n, start=1000):
     return [ev(start + i, "hook_gate", f"2026-10-20T10:{i:02d}:00Z", event="deny", rule_tag=tag, mode="block",
                task=tk(i + 1)) for i in range(n)]
@@ -174,13 +167,12 @@ def _misblock(denies, bypasses):
     return tw.suspected_misblocks(rows, rows)
 
 
-def test_t7_misblock_requires_bypass_within_30min_same_user_and_task():
+def test_misblock_requires_bypass_within_30min_same_user_and_task():
     denies = _deny_rows("r1", 5)
 
     def by(i, minutes, user=USER, task=None, n=2000):
-        return ev(n + i, "bypass", f"2026-10-20T10:{i:02d}:00Z", user=user, task=task or tk(i + 1), kind="no_verify") \
-            if minutes == 0 else ev(n + i, "bypass", (dt.datetime(2026, 10, 20, 10, i) + dt.timedelta(minutes=minutes))
-                                    .strftime("%Y-%m-%dT%H:%M:%SZ"), user=user, task=task or tk(i + 1), kind="no_verify")
+        ts = (dt.datetime(2026, 10, 20, 10, i) + dt.timedelta(minutes=minutes)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        return ev(n + i, "bypass", ts, user=user, task=task or tk(i + 1), kind="no_verify")
 
     hits = [by(i, 10) for i in range(3)]  # 3/5 = 0.6
     res = _misblock(denies, hits)
@@ -195,7 +187,6 @@ def test_t7_misblock_requires_bypass_within_30min_same_user_and_task():
     assert _misblock(four, [by(i, 10, n=3000) for i in range(4)]) == []  # < 5 denies
 
 
-# [T8]
 def _recalls(card, n, corrected, base=4000):
     rows = []
     for i in range(n):
@@ -206,7 +197,7 @@ def _recalls(card, n, corrected, base=4000):
     return rows
 
 
-def test_t8_low_efficiency_card_threshold_boundaries():
+def test_low_efficiency_card_threshold_boundaries():
     def low(n, corrected):
         return tw.low_efficiency_cards(sane(_recalls(CARD, n, corrected)))
     assert low(4, 4) == []  # recalls < 5
@@ -215,7 +206,7 @@ def test_t8_low_efficiency_card_threshold_boundaries():
     assert low(6, 3)[0]["ratio"] == 0.5  # exactly the threshold
 
 
-def test_t8_idle_card_candidates():
+def test_idle_card_candidates():
     _, end = tw.week_bounds(WEEK)
     card = lambda n, c, ts, status="active": ev(n, "lesson_card", ts, card=c, level="hint", scope_kind="global", status=status)
     rows = sane([
@@ -235,23 +226,34 @@ def test_t8_idle_card_candidates():
     assert tw.idle_cards(edge, end) == []
 
 
-# [T9]
-def test_t9_stage_table_marks_missing_data(tmp_path):
+def test_idle_card_created_exactly_four_weeks_ago_is_listed():
+    _, end = tw.week_bounds(WEEK)
+    lo = end - dt.timedelta(weeks=tw.IDLE_WEEKS)
+    card = lambda n, c, created: ev(n, "lesson_card", "2026-10-20T00:00:00Z", card=c, level="hint",
+                                    scope_kind="global", status="active", created=created)
+    on_edge = lo.strftime("%Y-%m-%d")
+    day_later = (lo + dt.timedelta(days=1)).strftime("%Y-%m-%d")
+    assert lo.hour == lo.minute == 0
+    rows = sane([card(1, CARD, on_edge), card(2, CARD2, day_later)])
+    assert [r["card"] for r in tw.idle_cards(rows, end)] == [CARD]
+
+
+def test_stage_table_marks_missing_data(tmp_path):
     repo = make_repo(tmp_path, {})
     data = tw.build(repo, WEEK, 20)
     assert [s["stage"] for s in data["stages"]] == ["需求", "开发", "测试", "验收"]
     for stage in data["stages"]:
         assert all(tw.NO_DATA in c for c in stage["cells"]), stage
     md = tw.render_md(data)
-    assert "本周无" in md
+    stage_section = md.split("## 5.")[1].split("## 6.")[0]
+    assert tw.NO_DATA in stage_section and "本周无" not in stage_section
     # with only a few test runs: insufficient sample is distinguished from no data
     repo2 = make_repo(tmp_path, {"2026-10-20": green_runs(3, 1)}, name="c2")
     cells = next(s for s in tw.build(repo2, WEEK, 20)["stages"] if s["stage"] == "测试")["cells"]
-    assert "样本不足" in cells[0] and tw.NO_DATA not in cells[0]
+    assert tw.LOW_N in cells[0] and tw.NO_DATA not in cells[0]
 
 
-# [T10]
-def test_t10_admin_dir_is_not_read_as_events(tmp_path):
+def test_admin_dir_is_not_read_as_events(tmp_path):
     good = ev(1, "bypass", "2026-10-20T10:00:00Z", kind="no_verify")
     repo = make_repo(tmp_path, {"2026-10-20": [good]}, trials=[trial()])
     # even a perfectly valid event line under admin/ (in any nesting) must be ignored
@@ -263,7 +265,6 @@ def test_t10_admin_dir_is_not_read_as_events(tmp_path):
     assert agg.summarize(events)["events"] == 1
 
 
-# [T11]
 def run_cli(*args):
     return subprocess.run([sys.executable, str(SCRIPT), *args], capture_output=True, text=True, encoding="utf-8")
 
@@ -279,7 +280,7 @@ def two_week_repo(tmp_path):
     return make_repo(tmp_path, {"2026-10-14": prev, "2026-10-20": cur}, trials=trials)
 
 
-def test_t11_cli_md_json_and_exit_codes(tmp_path):
+def test_cli_md_json_and_exit_codes(tmp_path):
     repo = two_week_repo(tmp_path)
     md = run_cli("--repo", str(repo), "--week", WEEK, "--format", "md")
     assert md.returncode == 0, md.stderr
@@ -297,7 +298,7 @@ def test_t11_cli_md_json_and_exit_codes(tmp_path):
     assert data["metrics_prev"]["test_green_rate"]["value"] == 0.5
     assert data["metrics"]["bypass:no_verify"]["value"] == 1
     assert data["overview"]["this"]["installs"] == 2 and data["overview"]["this"]["users"] == 2
-    assert data["trials_due"][0]["verdict"] == "已改善"
+    assert data["trials_due"][0]["verdict"] == tw.V_IMPROVED
     assert len(data["trial_problems"]) == 1
     # prefers the archived previous-week snapshot when present
     (repo / "admin" / "weekly").mkdir()
@@ -309,7 +310,7 @@ def test_t11_cli_md_json_and_exit_codes(tmp_path):
     assert stale["metrics_prev"]["test_green_rate"]["value"] == 0.5
 
 
-def test_t11_invalid_repo_exits_2(tmp_path):
+def test_invalid_repo_exits_2(tmp_path):
     assert run_cli("--repo", str(tmp_path / "missing")).returncode == 2
     plain = tmp_path / "plain"
     plain.mkdir()
@@ -317,7 +318,7 @@ def test_t11_invalid_repo_exits_2(tmp_path):
     assert run_cli("--repo", str(plain), "--week", "bad").returncode == 2
 
 
-def test_t11_missing_admin_dir_is_empty_ledger(tmp_path):
+def test_missing_admin_dir_is_empty_ledger(tmp_path):
     repo = make_repo(tmp_path, {"2026-10-20": green_runs(25, 20)})
     res = run_cli("--repo", str(repo), "--week", WEEK, "--format", "json")
     assert res.returncode == 0, res.stderr
@@ -325,7 +326,6 @@ def test_t11_missing_admin_dir_is_empty_ledger(tmp_path):
     assert data["trials_due"] == [] and data["trial_problems"] == []
 
 
-# [T12]
 def _aicj(*args, home):
     env = dict(os.environ, AICJ_SKIP_HUD="1")
     env.pop("AICJ_CLAUDE_DIR", None)
@@ -334,7 +334,7 @@ def _aicj(*args, home):
                           capture_output=True, text=True, encoding="utf-8", cwd=str(REPO_ROOT), env=env)
 
 
-def test_t12_adapter_install_doctor_uninstall(tmp_path):
+def test_adapter_install_doctor_uninstall(tmp_path):
     home = tmp_path / "home"
     home.mkdir()
     skill = home / ".claude" / "skills" / "team-weekly" / "SKILL.md"
@@ -352,15 +352,14 @@ def test_t12_adapter_install_doctor_uninstall(tmp_path):
     assert leftovers == []
 
 
-def test_t12_default_install_does_not_include_team_admin(tmp_path):
+def test_default_install_does_not_include_team_admin(tmp_path):
     home = tmp_path / "home"
     home.mkdir()
     assert _aicj("install", "--packs", "none", home=home).returncode == 0
     assert not (home / ".claude" / "skills" / "team-weekly").exists()
 
 
-# [T13]
-def test_t13_skill_keeps_required_constraints():
+def test_skill_keeps_required_constraints():
     text = SKILL.read_text(encoding="utf-8")
     assert text.startswith("---\nname: team-weekly\n")
     for needle in ("减法先行", "新增提案数不得超过删除数", "一次批量确认", "未勾选 = `unknown`", "不写 `rejected`",
@@ -372,28 +371,28 @@ def test_t13_skill_keeps_required_constraints():
 # Review-fix tests
 # ---------------------------------------------------------------------------
 @pytest.mark.parametrize("metric,direction,value,deferred,advice", [
-    ("bypass_total", "down", 0, 0, "保留"),                      # tie at optimum 0
-    ("test_green_rate", "up", 1.0, 0, "保留"),                   # tie at optimum 1.0
-    ("first_green_index_median", "down", 1.0, 0, "保留"),        # tie at optimum 1
-    ("test_green_rate", "up", 0.5, 0, "人工判定"),               # tie, not optimum
-    ("install_failure_rate", "down", 0.2, 0, "人工判定"),
-    ("gate_deny:r1", "down", 0, 0, "人工判定"),                  # no optimum for gate_deny
-    ("test_green_rate", "up", 0.5, 1, "保留或撤掉（二选一，不可再延期）"),
-    ("bypass_total", "down", 0, 1, "保留"),
-    ("gate_deny:r1", "down", 3, 1, "保留或撤掉（二选一，不可再延期）"),
+    ("bypass_total", "down", 0, 0, tw.A_KEEP),                      # tie at optimum 0
+    ("test_green_rate", "up", 1.0, 0, tw.A_KEEP),                   # tie at optimum 1.0
+    ("first_green_index_median", "down", 1.0, 0, tw.A_KEEP),        # tie at optimum 1
+    ("test_green_rate", "up", 0.5, 0, tw.A_MANUAL),               # tie, not optimum
+    ("install_failure_rate", "down", 0.2, 0, tw.A_MANUAL),
+    ("gate_deny:r1", "down", 0, 0, tw.A_MANUAL),                  # no optimum for gate_deny
+    ("test_green_rate", "up", 0.5, 1, tw.A_DECIDE),
+    ("bypass_total", "down", 0, 1, tw.A_KEEP),
+    ("gate_deny:r1", "down", 3, 1, tw.A_DECIDE),
 ])
 def test_tie_verdict_and_advice_by_optimum(metric, direction, value, deferred, advice):
     t, errs = tw.validate_trial(trial(metric=metric, direction=direction, deferred=deferred))
     assert not errs, errs
     res = tw.judge_trial(t, {"value": value, "n": 30}, value, False)
-    assert res["verdict"] == "持平" and res["advice"] == advice
+    assert res["verdict"] == tw.V_FLAT and res["advice"] == advice
 
 
 def test_tie_is_not_listed_as_not_improved(tmp_path):
     rows = green_runs(20, 10)  # green rate 0.5 == baseline 0.5
     repo = make_repo(tmp_path, {"2026-10-20": rows}, trials=[trial()])
     data = tw.build(repo, WEEK, 20)
-    assert data["trials_due"][0]["verdict"] == "持平"
+    assert data["trials_due"][0]["verdict"] == tw.V_FLAT
     assert data["subtraction"]["trials_not_improved"] == []
 
 
@@ -443,7 +442,7 @@ def test_baseline_null_is_recomputed_from_week_before_registered_week():
     cur = tw.compute_metrics(tw.in_window(events, *tw.week_bounds(WEEK)), 5)
     res = tw.due_trials({"t1": t}, cur, events, "2026-10-25", 5)[0]
     assert res["baseline"] == pytest.approx(0.2) and res["current"] == pytest.approx(0.6)
-    assert res["verdict"] == "已改善"
+    assert res["verdict"] == tw.V_IMPROVED
 
 
 def test_gate_deny_baseline_missing_key_is_zero_when_baseline_week_has_events():
@@ -455,11 +454,36 @@ def test_gate_deny_baseline_missing_key_is_zero_when_baseline_week_has_events():
     events = sane(base_events + cur_events)
     cur = tw.compute_metrics(tw.in_window(events, *tw.week_bounds(WEEK)), 5)
     res = tw.due_trials({"t1": t}, cur, events, "2026-10-25", 5)[0]
-    assert res["baseline"] == 0 and res["current"] == 2 and res["verdict"] == "未改善"
+    assert res["baseline"] == 0 and res["current"] == 2 and res["verdict"] == tw.V_WORSE
     # no events at all in the baseline week -> baseline stays unknown
     events2 = sane(cur_events)
     cur2 = tw.compute_metrics(tw.in_window(events2, *tw.week_bounds(WEEK)), 5)
-    assert tw.due_trials({"t1": t}, cur2, events2, "2026-10-25", 5)[0]["verdict"] == "样本不足"
+    assert tw.due_trials({"t1": t}, cur2, events2, "2026-10-25", 5)[0]["verdict"] == tw.LOW_N
+
+
+def test_partner_already_decided_does_not_make_trial_shared():
+    metrics = {"test_green_rate": {"value": 0.9, "n": 40}}
+    a, _ = tw.validate_trial(trial(id="a", shared_metric_with=["b"]))
+    b, _ = tw.validate_trial(trial(id="b", shared_metric_with=["a"], status="kept"))
+    due = tw.due_trials({"a": a, "b": b}, metrics, [], "2026-10-25", 20)
+    assert [(d["id"], d["verdict"]) for d in due] == [("a", tw.V_IMPROVED)]
+    # a listed partner on a different metric does not count as sharing either
+    c, _ = tw.validate_trial(trial(id="c", shared_metric_with=["d"]))
+    d, _ = tw.validate_trial(trial(id="d", metric="bypass_total", direction="down"))
+    assert tw.due_trials({"c": c, "d": d}, metrics, [], "2026-10-25", 20)[0]["verdict"] == tw.V_IMPROVED
+
+
+def test_later_row_with_same_id_overrides_earlier_one(tmp_path):
+    repo = make_repo(tmp_path, {"2026-10-20": green_runs(25, 20)},
+                     trials=[trial(), trial(status="kept")])
+    data = tw.build(repo, WEEK, 20)
+    assert data["trials_due"] == [] and data["trial_problems"] == []
+    # invalid later row is reported in section 6 and the earlier valid row stays in force
+    repo2 = make_repo(tmp_path, {"2026-10-20": green_runs(25, 20)},
+                      trials=[trial(), trial(status="bogus")], name="c2")
+    data2 = tw.build(repo2, WEEK, 20)
+    assert [d["id"] for d in data2["trials_due"]] == ["t1"]
+    assert len(data2["trial_problems"]) == 1 and "id=t1" in data2["trial_problems"][0] and "L2" in data2["trial_problems"][0]
 
 
 def test_review_date_after_week_end_is_not_due():

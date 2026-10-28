@@ -19,8 +19,9 @@ description: 团队管理员每周复盘：读采集仓库周报数字，减法�
 7. **写回**（采集仓库 `admin/`）：
    - 每条提案追加 `decisions.jsonl`：`{week, proposal_id, kind, decision, ref}`。`kind` 取 subtract / mechanize / rule / trial_review / stage；`decision` 取 approved / rejected / unknown（未勾选 = unknown）；`ref` = 执行后的提交号或在试项 id。
    - 批准的新机制追加 `trials.jsonl`，完整字段：`id`、`title`、`registered`、`metric`（只能取设计 §3.2 的指标键，或 `gate_deny:<rule_tag>` / `card_corrections_ratio:<card>` 前缀）、`baseline`（数字，或 null 由脚本自动补算）、`direction`（down / up）、`review_date`、`revoke_if`、`status=active`、`deferred=0`、`undo`、`shared_metric_with`（可省，默认 `[]`）。缺任一必填项不登记、不执行。
+   - 新在试项与已有 active 项共用同一指标时，两边都要写 `shared_metric_with`：新行填旧项 id，并为旧项追加同 id 新行（后写覆盖）补上新项 id。
    - 复查决策写回：到期项复查后追加同 id 的新行（后写覆盖）：保留 → `status=kept`；撤掉 → `status=revoked`；延期 → `deferred=1` 并给新的 `review_date`。
-   - 存档本周 `weekly/<YYYY-Www>.md` 与 `.json`；提交并推送 `admin/`。
+   - 存档本周 `weekly/<YYYY-Www>.md` 与 `.json`；`.json` 必须是未修改的 `--format json` 原样输出（下周对比会读它）；提交并推送 `admin/`。
 8. **执行**：批准的提案交框架正常开发流程（worktree、测试、合并）；本 skill 不直接改框架代码。
 
 ## 硬约束

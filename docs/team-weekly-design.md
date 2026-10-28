@@ -51,7 +51,7 @@
 | `gate_deny:<rule_tag>` | 该规则 deny 次数 | 看提案语义 |
 | `card_corrections_ratio:<card>` | 该卡 `corrections_after_recall / recalls` | 越低越好 |
 
-比率类指标的分母 < `MIN_N`（默认 20）时，值记为 `null`，展示「样本不足」，不参与任何判定。
+比率类指标的分母 < `MIN_N`（默认 20）时，值记为 `null`，展示「样本不足」，不参与任何判定。分母为 0（该周没有对应事件）时展示「无数据」而非「样本不足」，与 §3 四段表一致。
 
 减法候选（疑似误拦、低效经验卡）是提示不是判定，豁免该 min-n，但必须标注分母 n（见 §4）。
 
@@ -129,21 +129,21 @@
 
 5 维总分均为 5–6（无外部依赖，临时目录造事件即可，幂等），全部自动化。
 
-| # | 行为单元 | 总分 | 归属层级 | TDD | 备注 |
-|---|---|---|---|---|---|
-| T1 | ISO 周窗口：周日 23:59Z 归本周，周一 00:00Z 归下周；跨年周 | 5 | unit | Y | |
-| T2 | 比率分母 < min-n 输出 null 且展示「样本不足」 | 5 | unit | Y | |
-| T3 | 在试项判定：down/up 两方向的改善 / 未改善 / 持平（最优值、非最优值、gate_deny 三类） | 5 | unit | Y | |
-| T4 | 共用指标的在试项判定为「不可单独归因」 | 5 | unit | Y | |
-| T5 | `deferred=1` 到期只给保留 / 撤掉 | 5 | unit | Y | |
-| T6 | 台账坏行（未知键、缺字段、deferred>1）进第 6 节且不中断 | 5 | unit | Y | |
-| T7 | 疑似误拦：deny 后 30 分钟内同 user+task 有 bypass 才计入；超时或跨 task 不计 | 6 | unit | Y | |
-| T8 | 经验卡低效 / 闲置候选的阈值边界 | 5 | unit | Y | |
-| T9 | 四段表缺数据写「无数据」 | 5 | unit | N | |
-| T10 | `admin/` 下文件不被 `telemetry_aggregate` 当事件读取 | 5 | unit | N | 回归保护 |
-| T11 | 临时采集仓库：造两周事件 + 台账 → 脚本 md/json 各节内容正确，退出码 0；仓库不存在退出码 2 | 6 | integration | N | |
-| T12 | 适配器安装 / 卸载：临时 HOME `--adapters team-admin` 装上 skill，doctor 正常，卸载无残留 | 6 | integration | N | 走现有安装器测试模式 |
-| T13 | skill 文本：含减法先行、批量确认、未勾选=unknown、不自动执行四条约束 | 5 | contract | N | 静态断言 SKILL.md 关键约束，防止被改丢 |
+| # | 行为单元 | 测试 | 总分 | 归属层级 | TDD | 备注 |
+|---|---|---|---|---|---|---|
+| T1 | ISO 周窗口：周日 23:59Z 归本周，周一 00:00Z 归下周；跨年周 | `test_week_window_boundaries_and_year_crossing` | 5 | unit | Y | |
+| T2 | 比率分母 < min-n 输出 null 且展示「样本不足」 | `test_ratio_below_min_n_is_null_and_rendered_as_insufficient` | 5 | unit | Y | |
+| T3 | 在试项判定：down/up 两方向的改善 / 未改善 / 持平（最优值、非最优值、gate_deny 三类） | `test_trial_verdict_both_directions` | 5 | unit | Y | |
+| T4 | 共用指标的在试项判定为「不可单独归因」 | `test_shared_metric_is_not_attributable` | 5 | unit | Y | |
+| T5 | `deferred=1` 到期只给保留 / 撤掉 | `test_deferred_trial_only_keep_or_revoke` | 5 | unit | Y | |
+| T6 | 台账坏行（未知键、缺字段、deferred>1）进第 6 节且不中断 | `test_bad_ledger_rows_are_reported_and_do_not_abort` | 5 | unit | Y | |
+| T7 | 疑似误拦：deny 后 30 分钟内同 user+task 有 bypass 才计入；超时或跨 task 不计 | `test_misblock_requires_bypass_within_30min_same_user_and_task` | 6 | unit | Y | |
+| T8 | 经验卡低效 / 闲置候选的阈值边界 | `test_low_efficiency_card_threshold_boundaries；test_idle_card_candidates；test_idle_card_created_exactly_four_weeks_ago_is_listed` | 5 | unit | Y | |
+| T9 | 四段表缺数据写「无数据」 | `test_stage_table_marks_missing_data` | 5 | unit | N | |
+| T10 | `admin/` 下文件不被 `telemetry_aggregate` 当事件读取 | `test_admin_dir_is_not_read_as_events` | 5 | unit | N | 回归保护 |
+| T11 | 临时采集仓库：造两周事件 + 台账 → 脚本 md/json 各节内容正确，退出码 0；仓库不存在退出码 2 | `test_cli_md_json_and_exit_codes；test_invalid_repo_exits_2；test_missing_admin_dir_is_empty_ledger` | 6 | integration | N | |
+| T12 | 适配器安装 / 卸载：临时 HOME `--adapters team-admin` 装上 skill，doctor 正常，卸载无残留 | `test_adapter_install_doctor_uninstall；test_default_install_does_not_include_team_admin` | 6 | integration | N | 走现有安装器测试模式 |
+| T13 | skill 文本：含减法先行、批量确认、未勾选=unknown、不自动执行四条约束 | `test_skill_keeps_required_constraints` | 5 | contract | N | 静态断言 SKILL.md 关键约束，防止被改丢 |
 
 skill 的实际对话效果（提案质量）属人工验证，不进自动化。
 
