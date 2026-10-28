@@ -11,6 +11,35 @@
 | 使用者标识 | `sha256(salt + "\n" + git user.email 小写去空白)` 前 16 位；读不到 email 时用安装随机 ID 的哈希，前缀 `anon-` |
 | 开启条件 | 装了团队配置即采集，无单独开关；未带团队配置的安装不采集、不上报，且不创建 `aicj/telemetry/` 下任何文件 |
 
+## 整体流程
+
+```mermaid
+flowchart TD
+    CFG["团队配置 team-config<br/>team_id / collect_repo / branch / salt"]
+    CFG -->|"aicj install --team-config<br/>install.ps1 -TeamConfig"| INST["安装器校验并写入<br/>aicj/team.json、hooks/aicj/*、bin/aicj-telemetry<br/>注册 SessionStart / PreToolUse / PostToolUse / PostToolUseFailure"]
+
+    INST --> USE["日常使用 Claude Code"]
+    USE --> EMIT["直接 emit<br/>install / project_init / bypass / test_run / verify_probe"]
+    USE --> LOGS["本地日志<br/>gate-events / code-review-gates / cards / corrections / recalls / tasks.json"]
+
+    SS["SessionStart: telemetry-report.py<br/>未到期则退出；到期起脱离进程"] --> COLLECT["收集：按偏移增量转换本地日志<br/>hook_gate / review / lesson_* / correction / task_snapshot"]
+    LOGS --> COLLECT
+    EMIT --> SAN["sanitize：SCHEMA 白名单、词表外取哈希、PII 丢弃"]
+    COLLECT --> SAN
+    SAN --> SPOOL["spool/*.jsonl<br/>真相源，超 spool_max_mb 删最旧日期文件"]
+
+    SPOOL --> UP["上报：clone/pull collect-repo<br/>按 event_id 合并到 date/user-install.jsonl<br/>采集身份提交，推送被拒时 rebase 重试 3 次"]
+    UP -->|成功| OK["更新偏移与 last_success"]
+    UP -->|失败| ERR["记 last_attempt / last_error<br/>spool 保留，下次重试"]
+    UP --> REPO[("团队共享 git 收集仓库")]
+
+    REPO -->|管理员本地克隆| AGG["telemetry_aggregate.py<br/>event_id 去重，按天 / 用户哈希 / 任务 / 教训卡汇总<br/>输出 md 或 json"]
+    AGG --> ADMIN["管理员复盘"]
+    ADMIN -.->|"运营阶段，未实现"| PLAN["每日优化方案 → 管理员确认 → 执行"]
+```
+
+`aicj doctor` 检查团队配置、身份、最近上报与 spool 积压。`aicj uninstall` 先写卸载事件并同步上报一次，再删除钩子与 `team.json`，`telemetry/` 运行数据保留。
+
 ## 组件与落点
 
 | 源文件 | 安装位置 | 职责 |
