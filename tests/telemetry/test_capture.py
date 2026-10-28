@@ -250,3 +250,42 @@ def test_build_failed_matches_gradle_failure_banner():
 
 def test_mvnw_cmd_skip_tests_is_bypass():
     assert cap.bypass_kinds("mvnw.cmd package -DskipTests") == ["skip_tests"]
+
+
+@pytest.mark.parametrize("command,framework", [
+    ("mvn -q test -DskipTests && pytest -q", "pytest"),
+    ("./gradlew -q build -x test && npm test", "jest"),
+    ("mvn -q test -Dmaven.test.skip.exec=true; go test ./...", "go"),
+    ("mvn -q test -DskipTests", ""),
+    ("gradle build -x :app:test", ""),
+])
+def test_framework_ignores_segments_that_skip_tests(command, framework):
+    assert cap.test_framework(command) == framework
+
+
+@pytest.mark.parametrize("command", [
+    "gradle build -x :app:test", "./gradlew build -x :test", "gradle build --exclude-task=:test",
+    "gradle build --exclude-task :mod:test", "gradle build -x test", "gradle build -xtest",
+    "gradle build --exclude-task=test",
+])
+def test_gradle_qualified_test_exclusion_is_not_a_test_run(command):
+    assert cap.fallback_runs_tests(command) is False
+
+
+@pytest.mark.parametrize("command", [
+    "gradle build -x lint", "gradle build -x :app:lint", "gradle build --exclude-task=:app:javadoc",
+])
+def test_gradle_other_exclusions_still_run_tests(command):
+    assert cap.fallback_runs_tests(command) is True
+
+
+@pytest.mark.parametrize("command,skips", [
+    ("mvn test -Dmaven.test.skip.exec=false", False), ("mvn test -DskipTests=false", False),
+    ("mvn test -Dmaven.test.skip=false", False), ("mvn test -DskipTests=FALSE", False),
+    ("mvn test -Dmaven.test.skip.exec", True), ("mvn test -Dmaven.test.skip.exec=true", True),
+    ("mvn test -DskipTests", True), ("mvn test -DskipTests=true", True),
+    ("mvn test -Dmaven.test.skip=true", True), ("mvn test -Dmaven.test.skip", True),
+])
+def test_maven_skip_flag_values(command, skips):
+    assert cap.fallback_runs_tests(command) is (not skips)
+    assert (cap.bypass_kinds(command) == ["skip_tests"]) is skips

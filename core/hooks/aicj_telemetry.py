@@ -463,7 +463,7 @@ def _user_ssh_configured(env: dict, cwd: Path | str | None) -> bool:
 _GIT_ENV_ALLOW = ("GIT_SSH", "GIT_SSH_COMMAND", "GIT_SSH_VARIANT", "GIT_CONFIG_GLOBAL",
                   "GIT_CONFIG_SYSTEM", "GIT_CONFIG_NOSYSTEM", "GIT_EXEC_PATH",
                   "GIT_SSL_CAINFO", "GIT_SSL_CAPATH", "GIT_SSL_CERT", "GIT_SSL_KEY",
-                  "GIT_SSL_CERT_PASSWORD_PROTECTED", "GIT_SSL_NO_VERIFY", "GIT_ASKPASS",
+                  "GIT_SSL_CERT_PASSWORD_PROTECTED", "GIT_SSL_NO_VERIFY",
                   "GIT_PROXY_COMMAND", "GIT_HTTP_PROXY_AUTHMETHOD", "GIT_HTTP_LOW_SPEED_LIMIT",
                   "GIT_HTTP_LOW_SPEED_TIME")
 
