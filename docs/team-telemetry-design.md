@@ -44,8 +44,8 @@ task_key(claude_dir: Path, cwd: str, team: dict) -> tuple[str, str] | None   # (
 | `state.json` | 各来源读取偏移、上报偏移、`last_attempt`、`last_success`、`last_error` | 保留 |
 | `identity.json` | `install_id`、`user` 哈希 | 保留 |
 | `tasks.json` | 任务键 → 本地仓库路径与分支（只在本机，不上报） | 保留 |
-| `collect-repo/` | 收集仓库的本地克隆 | 保留 |
-| `report.lock` | 上报互斥，超过 10 分钟视为过期 | 保留 |
+| `collect-repo/` | 收集仓库的本地克隆（含全队数据） | 删除 |
+| `report.lock` | 上报互斥，超过 10 分钟视为过期 | 删除 |
 
 `team.json` 作为安装器生成文件登记进 manifest，卸载时删除；不带 `--team-config` 重装时沿用已有 `team.json`。
 
@@ -115,7 +115,7 @@ task_key(claude_dir: Path, cwd: str, team: dict) -> tuple[str, str] | None   # (
 1. 没有 `team.json` 时直接返回。拿不到 `report.lock` 时返回。
 2. 节流：未 `force` 且距 `last_success` 不足 `upload_interval_hours`（默认 24），或距 `last_attempt` 不足 1 小时，直接返回。
 3. 收集：按偏移增量读取本地来源，转换后写入 spool。
-所有 git 子进程：环境设 `GIT_TERMINAL_PROMPT=0`、`GCM_INTERACTIVE=never`、`GIT_SSH_COMMAND=ssh -o BatchMode=yes`，每次调用超时 60 秒。
+所有 git 子进程：环境设 `GIT_TERMINAL_PROMPT=0`、`GCM_INTERACTIVE=never`、`GIT_SSH_COMMAND=ssh -o BatchMode=yes`（仅当环境未设 `GIT_SSH_COMMAND`/`GIT_SSH` 且 `core.sshCommand` 为空时；收集主机须已在 `known_hosts`），每次调用超时 60 秒。
 
 本地日志转换时，`+00:00` 结尾的时间先归一成 `Z`。
 

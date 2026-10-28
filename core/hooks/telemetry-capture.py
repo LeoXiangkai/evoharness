@@ -121,10 +121,18 @@ def bypass_kinds(command: str) -> list[str]:
 def _is_test_segment(cmd: list[str]) -> bool:
     if not cmd:
         return False
-    name = Path(cmd[0]).name.lower()
+    name = Path(cmd[0].replace("\\", "/")).name.lower()
+    for ext in (".exe", ".cmd", ".bat"):
+        if name.endswith(ext):
+            name = name[:-len(ext)]
+            break
     rest = cmd[1:]
     if name in ("pytest", "py.test", "jest", "vitest"):
         return True
+    if name == "py":  # Windows launcher: py [-3] -m pytest
+        while rest and re.fullmatch(r"-\d+(\.\d+)?(-\d+)?", rest[0]):
+            rest = rest[1:]
+        return rest[:2] == ["-m", "pytest"]
     if name.startswith("python"):
         return rest[:2] == ["-m", "pytest"]
     if name in ("mvn", "mvnw"):
@@ -174,13 +182,29 @@ def _pytest(text: str):
     return last.start(), _row("pytest", c["passed"], c["failed"], c["skipped"], c["error"])
 
 
+_MAVEN_RESULTS = re.compile(r"^\[\w+\]\s*Results:\s*$", re.MULTILINE)
+
+
 def _maven(text: str):
-    last = None
-    for m in _MAVEN_LINE.finditer(text):
-        last = m
-    if not last:
-        return None
-    run, fail, err, skip = (int(g) for g in last.groups())
+    heads = list(_MAVEN_RESULTS.finditer(text))
+    picked = []
+    for i, h in enumerate(heads):  # one summary per module, right after its Results header
+        end = heads[i + 1].start() if i + 1 < len(heads) else len(text)
+        m = _MAVEN_LINE.search(text, h.end(), end)
+        if m:
+            picked.append(m)
+    if not picked:
+        last = None
+        for m in _MAVEN_LINE.finditer(text):
+            last = m
+        if not last:
+            return None
+        picked = [last]
+    run = fail = err = skip = 0
+    for m in picked:
+        r, f, e, k = (int(g) for g in m.groups())
+        run, fail, err, skip = run + r, fail + f, err + e, skip + k
+    last = picked[-1]
     return last.start(), _row("maven", max(run - fail - err - skip, 0), fail, skip, err)
 
 

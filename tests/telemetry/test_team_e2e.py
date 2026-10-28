@@ -219,12 +219,17 @@ def test_team_flow_end_to_end(tmp_path):
         if "team-telemetry" in line or "telemetry-identity" in line:
             assert "FAIL" not in line, line
 
-    # uninstall: hooks and team.json gone, runtime data kept
+    # uninstall: hooks, team.json, collect-repo clone and lock gone; spool/state/identity kept
+    (claude / "aicj" / "telemetry" / "collect-repo" / ".git").mkdir(parents=True, exist_ok=True)
+    (claude / "aicj" / "telemetry" / "report.lock").write_text("x", encoding="utf-8")
     u = run_aicj("uninstall", home=home, source=REPO)
     assert u.returncode == 0, u.stdout + u.stderr
     assert "telemetry-" not in _settings_cmds(home)
     assert not (claude / "aicj" / "team.json").exists()
     assert (claude / "aicj" / "telemetry").is_dir()
+    assert not (claude / "aicj" / "telemetry" / "collect-repo").exists()
+    assert not (claude / "aicj" / "telemetry" / "report.lock").exists()
+    assert (claude / "aicj" / "telemetry" / "identity.json").is_file()
 
 
 def test_unreachable_collect_repo_never_breaks_hooks_or_git(tmp_path):

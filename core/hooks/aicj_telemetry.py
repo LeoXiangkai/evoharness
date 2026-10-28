@@ -212,11 +212,11 @@ def _norm_ts(value: object) -> str | None:
         text = text[:-1] + "+00:00"
     try:
         parsed = _dt.datetime.fromisoformat(text)
-    except ValueError:
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=_dt.timezone.utc)
+        return _iso(parsed)
+    except Exception:  # e.g. OverflowError for 9999-12-31 with a negative offset
         return None
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=_dt.timezone.utc)
-    return _iso(parsed)
 
 
 def _parse_iso(value: object) -> _dt.datetime | None:
@@ -270,8 +270,31 @@ def _append_lines(path: Path, lines: list[str]) -> None:
         return
     path.parent.mkdir(parents=True, exist_ok=True)
     blob = ("\n".join(lines) + "\n").encode("utf-8")
-    with open(path, "ab") as fh:  # binary: no CRLF translation on Windows
-        fh.write(blob)
+    # one os.write on an O_APPEND fd: concurrent hook processes cannot interleave a line (binary: no CRLF)
+    fd = os.open(str(path), os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o644)
+    try:
+        locked = False
+        if os.name == "nt":
+            try:
+                import msvcrt
+                os.lseek(fd, 0, os.SEEK_SET)
+                msvcrt.locking(fd, msvcrt.LK_LOCK, 1)
+                locked = True
+            except Exception:
+                pass
+        try:
+            view = memoryview(blob)
+            while view:
+                view = view[os.write(fd, view):]
+        finally:
+            if locked:
+                try:
+                    os.lseek(fd, 0, os.SEEK_SET)
+                    msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+                except Exception:
+                    pass
+    finally:
+        os.close(fd)
 
 
 def _dumps(event: dict) -> str:
@@ -394,23 +417,78 @@ class _ReportError(Exception):
         self.category = category
 
 
-def _git_env() -> dict:
+_SSH_CFG_CACHE: dict = {}
+KILL_DRAIN_TIMEOUT = 5
+
+
+def _user_ssh_configured(env: dict, cwd: Path | str | None) -> bool:
+    if env.get("GIT_SSH_COMMAND") or env.get("GIT_SSH"):
+        return True
+    where = str(cwd) if cwd and os.path.isdir(str(cwd)) else ""  # repo-local config if in a repo, else global
+    if where not in _SSH_CFG_CACHE:  # one lookup per process / run
+        cfg = False
+        try:
+            proc = subprocess.run(["git", "config", "--get", "core.sshCommand"], cwd=where or None, env=env,
+                                  capture_output=True, timeout=LOCAL_GIT_TIMEOUT, stdin=subprocess.DEVNULL)
+            cfg = bool(proc.stdout.strip())
+        except Exception:
+            cfg = False
+        _SSH_CFG_CACHE[where] = cfg
+    return _SSH_CFG_CACHE[where]
+
+
+def _git_env(cwd: Path | str | None = None) -> dict:
     env = dict(os.environ)
     env["GIT_TERMINAL_PROMPT"] = "0"
     env["GCM_INTERACTIVE"] = "never"
-    env["GIT_SSH_COMMAND"] = "ssh -o BatchMode=yes"
+    if not _user_ssh_configured(env, cwd):
+        env["GIT_SSH_COMMAND"] = "ssh -o BatchMode=yes"
     return env
+
+
+def _kill_tree(proc) -> None:
+    try:
+        if os.name == "nt":
+            subprocess.run(["taskkill", "/T", "/F", "/PID", str(proc.pid)], capture_output=True,
+                           timeout=10, stdin=subprocess.DEVNULL,
+                           creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        else:
+            import signal
+            os.killpg(proc.pid, signal.SIGKILL)
+    except Exception:
+        pass
+    try:
+        proc.kill()
+    except Exception:
+        pass
 
 
 def _git(args: list[str], cwd: Path | str | None, timeout: int = GIT_TIMEOUT):
     """Single choke point for every git subprocess. Raises subprocess/OS errors to the caller."""
     kwargs: dict = {}
     if os.name == "nt":
-        kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-    return subprocess.run(
-        ["git", *args], cwd=str(cwd) if cwd else None, env=_git_env(), capture_output=True,
-        timeout=timeout, stdin=subprocess.DEVNULL, **kwargs,
+        kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0) | \
+            getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+    else:
+        kwargs["start_new_session"] = True
+    proc = subprocess.Popen(
+        ["git", *args], cwd=str(cwd) if cwd else None, env=_git_env(cwd), stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE, stdin=subprocess.DEVNULL, **kwargs,
     )
+    try:
+        stdout, stderr = proc.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired as exc:
+        # kill ssh/credential helpers too: they hold the pipes and would block a plain kill()
+        _kill_tree(proc)
+        try:
+            stdout, stderr = proc.communicate(timeout=KILL_DRAIN_TIMEOUT)
+        except subprocess.TimeoutExpired:
+            stdout, stderr = b"", b""
+        raise subprocess.TimeoutExpired(exc.cmd, timeout, output=stdout, stderr=stderr)
+    except BaseException:
+        _kill_tree(proc)
+        raise
+    return subprocess.CompletedProcess(proc.args, proc.returncode, stdout, stderr)
 
 
 def _out(proc) -> str:
@@ -465,7 +543,10 @@ def _repo_task(cwd: str, salt: str) -> dict | None:
 
 
 def _norm_path(path: str) -> str:
-    return os.path.realpath(path.replace("\\", "/") if os.name != "nt" else path).replace("\\", "/")
+    try:
+        return os.path.realpath(path.replace("\\", "/") if os.name != "nt" else path).replace("\\", "/")
+    except (ValueError, OSError):  # NUL or otherwise invalid path: keep a stable literal
+        return path.replace("\\", "/")
 
 
 def _keys(salt: str, common_abs: str, branch: str, origin: str | None) -> tuple[str, str]:
@@ -507,6 +588,7 @@ def _register_task(claude_dir: Path, info: dict) -> None:
                 return
         tasks[info["task"]] = {"repo": info["repo"], "repo_path": info["repo_path"],
                                "branch": info["branch"], "last_seen": _iso(now)}
+        # tmp + os.replace: a concurrent register can lose an entry but never corrupts the file
         _write_json_atomic(path, tasks)
     except Exception:
         pass
@@ -842,34 +924,46 @@ def _collect_locked(claude_dir: Path, team: dict) -> int:
         except OSError:
             continue
         for line_off, raw in lines:
-            row = _parse_row(raw)
-            if row is None:
+            try:  # one poison row must neither abort collect nor block its offset
+                row = _parse_row(raw)
+                if row is None:
+                    continue
+                aux["locator"] = line_off
+                event = conv(ctx, row, raw, state, aux)
+                if event is not None:
+                    _spool_write(claude_dir, event)
+                    added += 1
+            except Exception:
                 continue
-            aux["locator"] = line_off
-            event = conv(ctx, row, raw, state, aux)
-            if event is not None:
-                _spool_write(claude_dir, event)
-                added += 1
         state["offsets"][key] = new_off
 
     # cards.jsonl is rewritten atomically by the lesson tool, so byte offsets do not apply:
     # a row is new when its text has not been seen before.
+    # Keys are user-independent (card id + row text) so a user-hash change does not re-spool cards.
+    # Older state held user-bound event ids: those never match, so cards are re-keyed (re-emitted
+    # once with their original event ids, which the merge step de-duplicates) on the first run.
     seen = set(state["cards_seen"])
     current: list[str] = []
     for raw in card_lines:
-        row = _parse_row(raw)
-        cid = row.get("id") if row else ""
-        eid = ctx.event_id("cards", raw, cid)
-        current.append(eid)
-        if eid in seen:
+        try:
+            row = _parse_row(raw)
+            cid = row.get("id") if row else ""
+            ckey = _sha("card", str(cid), "\n", raw)[:32]
+            current.append(ckey)
+            if ckey in seen:
+                continue
+            event = _conv_card(ctx, row, raw, state, aux) if row else None
+            if event is not None:
+                _spool_write(claude_dir, event)
+                added += 1
+        except Exception:
             continue
-        event = _conv_card(ctx, row, raw, state, aux) if row else None
-        if event is not None:
-            _spool_write(claude_dir, event)
-            added += 1
     state["cards_seen"] = current
 
-    added += _collect_snapshots(claude_dir, ctx, state)
+    try:
+        added += _collect_snapshots(claude_dir, ctx, state)
+    except Exception:
+        pass
     _save_state(claude_dir, state)
     return added
 
