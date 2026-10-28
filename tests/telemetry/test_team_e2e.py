@@ -15,7 +15,8 @@ from .conftest import REPO_ROOT as REPO, git, make_remote, remote_files, write_l
 AICJ = REPO / "installer" / "aicj.py"
 AGG = REPO / "scripts" / "telemetry_aggregate.py"
 DAY = "2026-10-27"
-FAMILIES = ("install", "hook", "task_days", "rework", "lesson")
+FAMILIES = ("install", "hook", "task_days", "rework", "lesson", "skill", "ask_user")
+WEEKLY = REPO / "scripts" / "team_weekly.py"
 CAPTURE = "telemetry-capture.py"
 
 
@@ -106,6 +107,7 @@ def test_team_flow_end_to_end(tmp_path):
     assert (claude / "aicj" / "team.json").is_file()
     settings = _settings_cmds(home)
     assert "telemetry-capture.py" in settings and "telemetry-report.py" in settings
+    assert "lesson-capture.py" in settings  # a team install adds the lesson adapter for rework causes
 
     # reinstall without the flag keeps the team
     r = _install(home)
@@ -136,7 +138,7 @@ def test_team_flow_end_to_end(tmp_path):
         {"ts": DAY + "T10:05:00+00:00", "kind": "outcome", "repo_root": str(repo), "branch": "feature/x",
          "reviewers": 1, "findings": 3, "confirmed": 2, "review_gate": "required"}])
     write_log(claude / "aicj/lessons/corrections.jsonl",
-              [{"ts": DAY + "T10:02:00Z", "session_id": "s1", "cwd": str(repo), "prompt": "wrong"}])
+              [{"ts": DAY + "T10:02:00Z", "session_id": "s1", "cwd": str(repo), "prompt": "wrong, 漏了 other-callers"}])
     write_log(claude / "aicj/lessons/cards.jsonl", [
         {"id": "card-1", "scope": "global", "trigger": "t", "lesson": "text", "level": "warn",
          "status": "active", "created": "2026-10-01"}])
@@ -155,6 +157,17 @@ def test_team_flow_end_to_end(tmp_path):
         h = _hook(claude, payload)
         assert h.returncode == 0 and h.stdout == ""
         time.sleep(1.1)  # ts has 1s resolution; keep the failing and green runs ordered
+    sig = {"cwd": str(repo), "session_id": "s1"}
+    for payload in (
+        {**sig, "hook_event_name": "PostToolUse", "tool_name": "Skill", "tool_use_id": "k1",
+         "tool_input": {"skill": "code-review"}},
+        {**sig, "hook_event_name": "UserPromptSubmit", "prompt": "/private-team-skill go"},
+        {**sig, "hook_event_name": "UserPromptSubmit", "prompt": "/clear"},
+        {**sig, "hook_event_name": "PostToolUse", "tool_name": "AskUserQuestion", "tool_use_id": "q1",
+         "tool_input": {"questions": [{"question": "which-private-option?"}]}},
+    ):
+        h = _hook(claude, payload)
+        assert h.returncode == 0 and h.stdout == ""
 
     tool = claude / "bin" / "aicj-telemetry"
     rep = subprocess.run([sys.executable, str(tool), "report", "--force"], env=_env(claude),
@@ -172,12 +185,16 @@ def test_team_flow_end_to_end(tmp_path):
     assert [x["error_kind"] for x in installs if not x["ok"]] == ["UserError"]
     exact = {k: v for k, v in types.items() if k != "install"}
     assert exact == {"hook_gate": 1, "bypass": 1, "test_run": 2, "review": 2, "task_snapshot": 1,
-                     "correction": 1, "lesson_card": 1, "lesson_recall": 1}
+                     "correction": 1, "lesson_card": 1, "lesson_recall": 1, "skill_use": 2, "ask_user": 1}
     assert sorted(x["green"] for x in rows if x["type"] == "test_run") == [False, True]
     snap = next(x for x in rows if x["type"] == "task_snapshot")
     assert (snap["commits"], snap["files_changed"], snap["files_touched_repeatedly"]) == (2, 3, 1)
     blob = content
-    for leak in (str(repo), "never skip hooks", "no-verify", "wrong", "salt-abc"):
+    assert [(x["cause"], x["cause_rules"]) for x in rows if x["type"] == "correction"] == [("B", "r1")]
+    assert sorted((x["skill"][:2], x["via"]) for x in rows if x["type"] == "skill_use") == [("co", "tool"), ("x-", "slash")]
+    assert [x["questions"] for x in rows if x["type"] == "ask_user"] == [1]
+    for leak in (str(repo), "never skip hooks", "no-verify", "wrong", "漏了", "other-callers", "salt-abc",
+                 "private-team-skill", "which-private-option"):
         assert leak not in blob
     user_hash = rows[0]["user"]
     assert {x["user"] for x in rows} == {user_hash}
@@ -187,7 +204,7 @@ def test_team_flow_end_to_end(tmp_path):
     clone = _collect_clone(tmp_path, remote)
     data = _agg(clone, "json")
     n_install = types["install"]
-    totals = {"install": n_install, "hook": 2, "task_days": 1, "rework": 4, "lesson": 3}
+    totals = {"install": n_install, "hook": 2, "task_days": 1, "rework": 4, "lesson": 3, "skill": 2, "ask_user": 1}
     assert data["summary"]["events"] == sum(types.values())
     for fam in FAMILIES:
         assert sum(d["families"][fam] for d in data["by_day"].values()) == totals[fam], fam
@@ -204,6 +221,16 @@ def test_team_flow_end_to_end(tmp_path):
     md = _agg(clone, "md")
     assert "## By day" in md and "## By user hash" in md and "## By task" in md and "## By lesson card" in md and DAY in md and user_hash in md
     assert str(repo) not in md and "event_id" not in md
+
+    assert data["rework_cause"]["r1"]["counts"] == {"B": 1}
+    assert data["skill"]["code-review"]["calls"] == 1 and data["ask_user"]["questions"] == 1
+    wk = subprocess.run([sys.executable, str(WEEKLY), "--repo", str(clone), "--week", "2026-W44", "--format", "json",
+                         "--min-n", "1"], capture_output=True, text=True, timeout=120)
+    assert wk.returncode == 0, wk.stderr
+    weekly = json.loads(wk.stdout)
+    assert weekly["metrics"]["rework_share:B"]["value"] == 1.0
+    stages = {r["stage"]: " ".join(r["cells"]) for r in weekly["stages"]}
+    assert "rework_share:A=" in stages["需求"] and "rework_share:E=" in stages["验收"]
 
     # second report is idempotent
     rep2 = subprocess.run([sys.executable, str(tool), "report", "--force"], env=_env(claude),

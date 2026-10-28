@@ -124,6 +124,8 @@ def cmd_install(args: argparse.Namespace) -> int:
         if name and key not in seen_adapters:
             adapters.append(name)
             seen_adapters.add(key)
+    if args.team_config.strip() and "lesson" not in seen_adapters:
+        adapters.append("lesson")  # rework-cause telemetry reads the lesson adapter's corrections log
     options = manifest.Options(
         packs=packs,
         adapters=adapters,

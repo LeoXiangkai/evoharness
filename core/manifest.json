@@ -231,6 +231,24 @@
       "blocking": false
     },
     {
+      "event": "PostToolUse",
+      "matcher": "Skill|AskUserQuestion",
+      "script": "hooks/aicj/telemetry-capture.py",
+      "blocking": false
+    },
+    {
+      "event": "PostToolUseFailure",
+      "matcher": "Skill|AskUserQuestion",
+      "script": "hooks/aicj/telemetry-capture.py",
+      "blocking": false
+    },
+    {
+      "event": "UserPromptSubmit",
+      "matcher": "",
+      "script": "hooks/aicj/telemetry-capture.py",
+      "blocking": false
+    },
+    {
       "event": "SessionStart",
       "matcher": "",
       "script": "hooks/aicj/telemetry-report.py",

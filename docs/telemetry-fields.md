@@ -31,9 +31,11 @@ Values are tokens (`[A-Za-z0-9._:+-]{1,64}`), hashes (`[0-9a-f]{8,64}`), ints, b
 | review | kind (scope, outcome), review_gate, risk_signals, file_count, changed_lines, reviewers, findings, confirmed |
 | task_snapshot | commits, files_changed, files_touched_repeatedly, commits_after_review |
 | verify_probe | overall, layers, failed_layers |
-| correction | (no fields) |
+| correction | cause (A, B, C, D, E, F, G), cause_rules, after_skill |
 | lesson_card | card, level (hint, warn, block), scope_kind (global, path), status (active, retired), created |
 | lesson_recall | card, level (hint, warn, block) |
+| skill_use | skill, via (tool, slash) |
+| ask_user | questions |
 
 Aggregate output (`scripts/telemetry_aggregate.py`) derives, without adding event fields: hook gate counts by mode, test passed/failed/skipped sums, lesson recalls, By task (test runs, first green index) and By lesson card (recalls, corrections after first recall; best-effort by task hash and ts).
 
@@ -43,3 +45,6 @@ Aggregate output (`scripts/telemetry_aggregate.py`) derives, without adding even
 - `go test` without `-v` counts packages (ok/FAIL lines), not test cases.
 - `verify_probe.layers` / `failed_layers` and `hook_gate.rule_tag` are matched against a closed vocabulary (`KNOWN_LAYERS`, `KNOWN_RULE_TAGS` in `aicj_telemetry.py`, taken from verify-probe `LAYER_SPECS` and the `[tag]` prefixes of push-review-gate / git-safe). Any other value is replaced by `x-` + the first 10 hex of sha256(salt+value).
 - Phone numbers (including `+86` / `86` / `0086` prefixed forms) cause the field to be dropped from the event, not redacted in place. Builds that skip tests (`-DskipTests`, `-Dmaven.test.skip=true`, gradle `-x test` / `--exclude-task test`) produce no `test_run` event. Credential patterns include AIza keys, `glpat-`, Stripe `sk_`/`rk_` live/test keys and `xox[abprs]-` tokens.
+- `correction.cause` is the rework cause class A-G, classified on the member machine by the keyword rules `REWORK_RULES` (version `cause_rules`, now `r1`; order A, B, F, E, C, D, no match G). The correction text itself is never part of the event. `after_skill` is the latest skill token used in the same session within 10 minutes before the correction (from the local `telemetry/skill-log.jsonl`, kept 14 days, never uploaded).
+- `skill_use.skill` (and `after_skill`) are matched against `KNOWN_SKILLS` (the directory names under `core/skills` and `adapters/*/skills`); any other name, including plugin skills, becomes `x-` + the first 10 hex of sha256(salt+name). `via` is `tool` for the Skill tool and `slash` for a leading slash command; Claude Code built-in commands (`BUILTIN_SLASH`) produce no event.
+- `ask_user.questions` is the question count (1-4) of one AskUserQuestion call; no question text is recorded.

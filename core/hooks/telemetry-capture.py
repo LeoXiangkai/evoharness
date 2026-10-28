@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """PreToolUse/PostToolUse/PostToolUseFailure(Bash) hook: record bypass and test-run telemetry.
+Also: Skill / AskUserQuestion tool calls (skill_use, ask_user) and UserPromptSubmit leading slash commands (skill_use).
 
 Pre: git commit/push --no-verify or commit -n, AICJ_HOOK_MODE= overrides, -DskipTests style flags.
 Post: pytest / maven surefire / jest / vitest / gradle / go test summaries -> test_run.
@@ -343,6 +344,62 @@ def _response_text(payload: dict) -> str:
     return "\n".join(parts)
 
 
+_SLASH_RE = re.compile(r"^/([A-Za-z0-9][A-Za-z0-9._:-]{0,63})(?:\s|$)")
+
+
+def _shared_event_id(kind: str, payload: dict) -> str | None:
+    sid, tuid = payload.get("session_id"), payload.get("tool_use_id")
+    if isinstance(sid, str) and sid and isinstance(tuid, str) and tuid:
+        return hashlib.sha256(f"{kind}\n{sid}\n{tuid}".encode("utf-8")).hexdigest()[:32]
+    return None
+
+
+def slash_command(prompt: object) -> str | None:
+    """Leading slash command name of a prompt, None for plain text, paths and built-in commands."""
+    if not isinstance(prompt, str):
+        return None
+    m = _SLASH_RE.match(prompt.lstrip())
+    if not m:
+        return None
+    name = m.group(1)
+    if name.lower() in _builtin_slash():
+        return None
+    return name
+
+
+def _builtin_slash() -> frozenset:
+    import aicj_telemetry as tel
+    return tel.BUILTIN_SLASH
+
+
+def _other_signals(claude: Path, payload: dict, tool: str) -> None:
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import aicj_telemetry as tel
+
+    event = str(payload.get("hook_event_name") or "").strip()
+    cwd = payload.get("cwd") if isinstance(payload.get("cwd"), str) and payload.get("cwd") else None
+    tool_input = payload.get("tool_input") if isinstance(payload.get("tool_input"), dict) else {}
+    if event == "UserPromptSubmit":
+        name = slash_command(payload.get("prompt"))
+        if name:
+            tel.emit(claude, "skill_use", {"skill": name, "via": "slash"}, cwd=cwd)
+            tel.record_skill(claude, payload.get("session_id"), name)
+    elif event in ("PostToolUse", "PostToolUseFailure"):
+        if tool == "Skill":
+            raw = tool_input.get("skill")
+            name = raw.strip() if isinstance(raw, str) else ""
+            if name:
+                tel.emit(claude, "skill_use", {"skill": name, "via": "tool"}, cwd=cwd,
+                         event_id=_shared_event_id("skill_use", payload))
+                tel.record_skill(claude, payload.get("session_id"), name)
+        elif tool == "AskUserQuestion":
+            qs = tool_input.get("questions")
+            count = len(qs) if isinstance(qs, list) else 0
+            if count > 0:
+                tel.emit(claude, "ask_user", {"questions": min(count, 4)}, cwd=cwd,
+                         event_id=_shared_event_id("ask_user", payload))
+
+
 def main() -> None:
     claude = _claude_dir()
     if not (claude / "aicj" / "team.json").is_file():
@@ -352,7 +409,14 @@ def main() -> None:
         payload = json.loads(raw) if raw.strip() else {}
     except Exception:
         return
-    if not isinstance(payload, dict) or str(payload.get("tool_name") or "").strip() != "Bash":
+    if not isinstance(payload, dict):
+        return
+    tool = str(payload.get("tool_name") or "").strip()
+    if tool != "Bash":
+        try:  # new signal paths must never disturb the Bash path or the hook's exit code
+            _other_signals(claude, payload, tool)
+        except Exception:
+            pass
         return
     tool_input = payload.get("tool_input") if isinstance(payload.get("tool_input"), dict) else {}
     command = tool_input.get("command") if isinstance(tool_input.get("command"), str) else ""

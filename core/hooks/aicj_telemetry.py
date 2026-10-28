@@ -23,6 +23,7 @@ from urllib.parse import urlsplit
 __all__ = [
     "SCHEMA", "ENVELOPE", "ENVELOPE_REQUIRED",
     "load_team", "identity", "sanitize", "emit", "collect", "run_report", "status", "task_key",
+    "record_skill", "classify_rework", "skill_token",
 ]
 
 SCHEMA_VERSION = 1
@@ -42,7 +43,9 @@ PLATFORMS = ("darwin", "linux", "windows", "wsl")
 EVENT_TYPES = (
     "install", "project_init", "hook_gate", "bypass", "test_run", "review",
     "task_snapshot", "verify_probe", "correction", "lesson_card", "lesson_recall",
+    "skill_use", "ask_user",
 )
+REWORK_CAUSES = ("A", "B", "C", "D", "E", "F", "G")
 
 ENVELOPE = {
     "schema": "int",
@@ -86,13 +89,15 @@ SCHEMA = {
         "commits_after_review": "int",
     },
     "verify_probe": {"overall": "token", "layers": "tokens", "failed_layers": "tokens"},
-    "correction": {},
+    "correction": {"cause": ("enum", REWORK_CAUSES), "cause_rules": "token", "after_skill": "token"},
     "lesson_card": {
         "card": "hash", "level": ("enum", ("hint", "warn", "block")),
         "scope_kind": ("enum", ("global", "path")),
         "status": ("enum", ("active", "retired")), "created": "date",
     },
     "lesson_recall": {"card": "hash", "level": ("enum", ("hint", "warn", "block"))},
+    "skill_use": {"skill": "token", "via": ("enum", ("tool", "slash"))},
+    "ask_user": {"questions": "int"},
 }
 
 _TOKEN_RE = re.compile(r"[A-Za-z0-9._:+-]{1,64}")
@@ -125,6 +130,56 @@ KNOWN_LAYERS = frozenset({"backend-compile", "backend-unit", "service-start", "a
 # Rule tags: the "[tag]" prefix of gate/hook messages; the only ones emitted are in
 # core/hooks/push-review-gate.py and core/bin/git-safe.
 KNOWN_RULE_TAGS = frozenset({"push-review-gate", "git-safe"})
+# Framework skills: directory names under core/skills/* and adapters/*/skills/* (tests keep this in sync).
+KNOWN_SKILLS = frozenset({
+    "add-module", "auto-sdd", "code-review", "flow", "git-commit", "local-verify", "prd", "qa-baseline",
+    "qa-testcase-pro", "req-analysis", "req-intake", "sdd-pipeline", "executor-handoff-ops", "team-weekly",
+})
+# Claude Code built-in slash commands: never a skill_use event.
+BUILTIN_SLASH = frozenset({
+    "add-dir", "agents", "bug", "clear", "compact", "config", "context", "cost", "doctor", "exit", "export",
+    "help", "hooks", "ide", "init", "login", "logout", "mcp", "memory", "model", "permissions", "plugin",
+    "pr-comments", "privacy-settings", "release-notes", "resume", "review", "rewind", "status", "statusline",
+    "terminal-setup", "theme", "todos", "usage", "vim", "quit", "reload-plugins", "output-style", "fast",
+    "login-status", "upgrade", "feedback", "bashes", "install-github-app", "security-review", "skills",
+})
+SKILL_LOG_DAYS = 14
+AFTER_SKILL_WINDOW_SECONDS = 600
+REWORK_RULES_VERSION = "r1"
+# Evaluation order A -> B -> F -> E -> C -> D; no match -> G. Matched case-insensitively against the
+# local correction text only; the text itself never enters an event.
+REWORK_RULES = (
+    ("A", ("需求", "口径", "不是这个意思", "我要的是", "理解错", "不是我要的", "requirement")),
+    ("B", ("漏了", "也要", "其他地方", "也得改", "同步改", "忘了", "影响到", "missed")),
+    ("F", ("测试", "用例", "断言", "mock", "test")),
+    ("E", ("审查", "评审", "review", "规范", "命名", "注释", "不符合约定")),
+    ("C", ("环境", "配置", "端口", "代理", "依赖", "版本", "数据库", "数据不对", "权限", "登录", "proxy", "env")),
+    ("D", ("报错", "bug", "异常", "空指针", "崩", "跑不起来", "不生效", "逻辑错", "error")),
+)
+_SKILL_HASH_RE = re.compile(r"x-[0-9a-f]{10}")
+
+
+def classify_rework(text: object) -> str:
+    """Rework cause letter A..G for a correction text (rules r1)."""
+    if not isinstance(text, str) or not text.strip():
+        return "G"
+    low = text.lower()
+    for cause, words in REWORK_RULES:
+        if any(w in low for w in words):
+            return cause
+    return "G"
+
+
+def skill_token(salt: str, name: object) -> str | None:
+    """Framework skill name as-is, any other name as 'x-' + salted hash (idempotent on that form)."""
+    if not isinstance(name, str):
+        return None
+    name = name.strip()
+    if not name:
+        return None
+    if name in KNOWN_SKILLS or _SKILL_HASH_RE.fullmatch(name):
+        return name
+    return "x-" + _sha(salt, name)[:10]
 
 
 def _vocab_or_hash(salt: str, value: object, vocab: frozenset) -> object:
@@ -669,6 +724,10 @@ def _build(team: dict, ident: dict, etype: str, data: dict, ts: str,
                 event[key] = [_vocab_or_hash(salt, v, KNOWN_LAYERS) for v in event[key]]
     elif etype == "hook_gate" and "rule_tag" in event:
         event["rule_tag"] = _vocab_or_hash(salt, event["rule_tag"], KNOWN_RULE_TAGS)
+    elif etype == "skill_use" and "skill" in event:
+        event["skill"] = skill_token(salt, event["skill"])
+    elif etype == "correction" and "after_skill" in event:
+        event["after_skill"] = skill_token(salt, event["after_skill"])
     return sanitize(event)
 
 
@@ -881,11 +940,106 @@ def _conv_review(ctx: _Ctx, row: dict, raw: str, state: dict, aux: dict) -> dict
     return ctx.build("review", data, ts, "code-review-gates", raw, rt, aux.get("locator", ""))
 
 
+# ---------------------------------------------------------------------------
+# skill-log: local-only association of skill calls with later corrections (never uploaded)
+# ---------------------------------------------------------------------------
+def _skill_log_path(claude_dir: Path) -> Path:
+    return _tdir(claude_dir) / "skill-log.jsonl"
+
+
+def _session_key(salt: str, session_id: object) -> str:
+    if not isinstance(session_id, str) or not session_id.strip():
+        return ""
+    return _sha(salt, "\n", session_id.strip())[:16]
+
+
+def record_skill(claude_dir: Path, session_id: object, skill: object, ts: str | None = None) -> bool:
+    """Append (session hash, ts, skill token) to the local skill-log. Never raises."""
+    try:
+        team = load_team(claude_dir)
+        if team is None:
+            return False
+        salt = str(team.get("salt", ""))
+        key = _session_key(salt, session_id)
+        token = skill_token(salt, skill)
+        if not key or not token:
+            return False
+        row = {"s": key, "ts": ts or _iso(_now()), "skill": token}
+        _append_lines(_skill_log_path(claude_dir), [_dumps(row)])
+        return True
+    except Exception:
+        return False
+
+
+def _load_skill_rows(claude_dir: Path) -> list[dict]:
+    path = _skill_log_path(claude_dir)
+    if not path.is_file():
+        return []
+    rows: list[dict] = []
+    for ln in path.read_bytes().decode("utf-8", "replace").split("\n"):
+        row = _parse_row(ln.strip("\r"))
+        if row and isinstance(row.get("s"), str) and isinstance(row.get("skill"), str):
+            when = _parse_iso(row.get("ts"))
+            if when is not None:
+                rows.append({"s": row["s"], "when": when, "skill": row["skill"]})
+    return rows
+
+
+def _prune_skill_log(claude_dir: Path, now: _dt.datetime | None = None) -> None:
+    path = _skill_log_path(claude_dir)
+    if not path.is_file():
+        return
+    cutoff = (now or _now()) - _dt.timedelta(days=SKILL_LOG_DAYS)
+    keep: list[str] = []
+    dropped = False
+    for ln in path.read_bytes().decode("utf-8", "replace").split("\n"):
+        ln = ln.strip("\r")
+        if not ln.strip():
+            continue
+        row = _parse_row(ln)
+        when = _parse_iso(row.get("ts")) if row else None
+        if when is None or when < cutoff:
+            dropped = True
+            continue
+        keep.append(ln)
+    if dropped:
+        tmp = path.with_name(path.name + f".{os.getpid()}.tmp")
+        tmp.write_text("".join(ln + "\n" for ln in keep), encoding="utf-8", newline="\n")
+        os.replace(tmp, path)
+
+
+def _skill_before(rows: object, salt: str, session_id: object, ts: str) -> str | None:
+    """Latest skill token logged for the session within AFTER_SKILL_WINDOW_SECONDS before ts."""
+    key = _session_key(salt, session_id)
+    when = _parse_iso(ts)
+    if not key or when is None or not rows:
+        return None
+    best = None
+    for r in list(rows):
+        if r["s"] != key:
+            continue
+        delta = (when - r["when"]).total_seconds()
+        if 0 <= delta <= AFTER_SKILL_WINDOW_SECONDS and (best is None or r["when"] >= best["when"]):
+            best = r
+    return best["skill"] if best else None
+
+
 def _conv_correction(ctx: _Ctx, row: dict, raw: str, state: dict, aux: dict) -> dict | None:
     ts = _norm_ts(row.get("ts"))
     if not ts:
         return None
-    return ctx.build("correction", {}, ts, "corrections", raw, ctx.repo_task(row.get("cwd")), aux.get("locator", ""))
+    try:
+        cause = classify_rework(row.get("prompt"))
+    except Exception:
+        cause = "G"
+    data: dict = {"cause": cause, "cause_rules": REWORK_RULES_VERSION}
+    try:  # association is best effort: a failure here must not lose the correction itself
+        skill = _skill_before(aux.get("skill_rows"), ctx.salt, row.get("session_id"), ts)
+        if skill:
+            data["after_skill"] = skill
+    except Exception:
+        pass
+    return ctx.build("correction", data, ts, "corrections", raw, ctx.repo_task(row.get("cwd")), aux.get("locator", ""))
 
 
 def _conv_recall(ctx: _Ctx, row: dict, raw: str, state: dict, aux: dict) -> dict | None:
@@ -958,7 +1112,12 @@ def _collect_locked(claude_dir: Path, team: dict) -> int:
     state = _load_state(claude_dir)
     base = Path(claude_dir) / "aicj"
     added = 0
-    aux: dict = {"levels": {}}
+    aux: dict = {"levels": {}, "skill_rows": []}
+    try:
+        _prune_skill_log(claude_dir)
+        aux["skill_rows"] = _load_skill_rows(claude_dir)
+    except Exception:
+        pass
 
     cards_path = base / "lessons" / "cards.jsonl"
     card_lines: list[str] = []

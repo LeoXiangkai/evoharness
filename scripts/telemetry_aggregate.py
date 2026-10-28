@@ -28,6 +28,8 @@ FAMILIES = {
     "task_days": ("task_snapshot",),  # one snapshot per task per day: counts task-days, not tasks
     "rework": ("test_run", "review"),
     "lesson": ("lesson_card", "lesson_recall", "correction"),
+    "skill": ("skill_use",),
+    "ask_user": ("ask_user",),
 }
 FAMILY_OF = {t: f for f, types in FAMILIES.items() for t in types}
 
@@ -108,6 +110,46 @@ def by_lesson_card(events: list[dict]) -> dict[str, dict]:
     return out
 
 
+def by_rework_cause(events: list[dict]) -> dict:
+    """Correction counts and shares per rule version and cause; corrections without a cause count as G."""
+    versions: dict[str, Counter] = defaultdict(Counter)
+    for ev in events:
+        if ev["type"] == "correction":
+            versions[ev.get("cause_rules") or "-"][ev.get("cause") or "G"] += 1
+    out = {}
+    for ver in sorted(versions):
+        total = sum(versions[ver].values())
+        counts = {c: versions[ver][c] for c in tel.REWORK_CAUSES if versions[ver][c]}
+        out[ver] = {"total": total, "counts": counts,
+                    "shares": {c: n / total for c, n in counts.items()},
+                    "g_share": versions[ver]["G"] / total}
+    return out
+
+
+def by_skill(events: list[dict]) -> dict[str, dict]:
+    """Per skill token: calls, via split, and corrections whose after_skill names it."""
+    out: dict[str, dict] = {}
+    for ev in events:
+        if ev["type"] == "skill_use" and ev.get("skill"):
+            row = out.setdefault(ev["skill"], {"calls": 0, "tool": 0, "slash": 0, "corrected": 0})
+            row["calls"] += 1
+            if ev.get("via") in ("tool", "slash"):
+                row[ev["via"]] += 1
+    for ev in events:
+        if ev["type"] == "correction" and ev.get("after_skill"):
+            out.setdefault(ev["after_skill"], {"calls": 0, "tool": 0, "slash": 0, "corrected": 0})["corrected"] += 1
+    return dict(sorted(out.items()))
+
+
+def ask_user_summary(events: list[dict]) -> dict:
+    asks = [ev for ev in events if ev["type"] == "ask_user"]
+    questions = sum(_int(ev.get("questions")) for ev in asks)
+    task_days = len({(ev["user"], ev.get("task"), ev["ts"][:10]) for ev in events
+                     if ev["type"] == "task_snapshot"})
+    return {"calls": len(asks), "questions": questions, "task_days": task_days,
+            "per_task_day": (questions / task_days) if task_days else None}
+
+
 def detail(events: list[dict]) -> dict[str, int]:
     c = Counter()
     for ev in events:
@@ -176,6 +218,9 @@ def build(repo: Path, since: str) -> dict:
         "by_user": grouped(events, lambda ev: ev["user"]),
         "by_task": by_task(events),
         "by_lesson_card": by_lesson_card(events),
+        "rework_cause": by_rework_cause(events),
+        "skill": by_skill(events),
+        "ask_user": ask_user_summary(events),
     }
 
 
@@ -209,7 +254,15 @@ def render_md(data: dict) -> str:
     lines += ["", "## By lesson card (best-effort: matched by task hash and ts)", "",
               "| card | recalls | corrections_after_recall |", "|---|---|---|"]
     lines += [f"| {c} | {r['recalls']} | {r['corrections_after_recall']} |" for c, r in data["by_lesson_card"].items()]
-    lines.append("")
+    lines += ["", "## Rework cause (per rule version)", "", "| rules | total | counts | G share |", "|---|---|---|---|"]
+    lines += [f"| {v} | {r['total']} | {json.dumps(r['counts'])} | {r['g_share']:.0%} |"
+              for v, r in data["rework_cause"].items()]
+    lines += ["", "## Skill use", "", "| skill | calls | tool | slash | corrected_after |", "|---|---|---|---|---|"]
+    lines += [f"| {k} | {r['calls']} | {r['tool']} | {r['slash']} | {r['corrected']} |" for k, r in data["skill"].items()]
+    a = data["ask_user"]
+    lines += ["", "## Ask user", "",
+              f"- calls: {a['calls']}  questions: {a['questions']}  task-days: {a['task_days']}  "
+              f"per task-day: {'n/a' if a['per_task_day'] is None else round(a['per_task_day'], 2)}", ""]
     return "\n".join(lines)
 
 

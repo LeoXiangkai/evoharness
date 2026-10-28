@@ -23,6 +23,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import telemetry_aggregate as agg  # noqa: E402
 
+tel = agg.tel
+
 DEFAULT_MIN_N = 20
 MISBLOCK_MIN_DENIES = 5
 MISBLOCK_RATIO = 0.5
@@ -52,10 +54,14 @@ FIXED_KEYS = (
     "install_failure_rate", "test_green_rate", "first_green_index_median",
     "corrections_per_task_day", "rework_files_per_task", "commits_after_review_per_task",
     "bypass_total", "bypass:no_verify", "bypass:hook_mode_override", "bypass:skip_tests",
+    "ask_user_per_task_day",
 )
 BYPASS_KINDS = ("no_verify", "hook_mode_override", "skip_tests")
-PREFIX_KEYS = ("gate_deny:", "card_corrections_ratio:")
-LOWER_IS_BETTER = {k for k in FIXED_KEYS if k != "test_green_rate"} | {"card_corrections_ratio:"}
+PREFIX_KEYS = ("gate_deny:", "card_corrections_ratio:", "rework_share:", "skill_corrected_ratio:")
+LOWER_IS_BETTER = ({k for k in FIXED_KEYS if k != "test_green_rate"}
+                   | {"card_corrections_ratio:", "rework_share:", "skill_corrected_ratio:"})
+G_SHARE_ALERT = 0.5  # G share above this in two consecutive weeks means the r1 keyword rules need tuning
+REQ_SKILLS = ("req-intake", "prd", "req-analysis")
 
 TRIAL_FIELDS = ("id", "title", "registered", "metric", "baseline", "direction", "review_date",
                 "revoke_if", "status", "deferred", "undo")
@@ -161,6 +167,15 @@ def compute_metrics(events: list[dict], min_n: int) -> dict[str, dict]:
         out["gate_deny:" + tag] = {"value": denies[tag], "n": None}
     for card, row in agg.by_lesson_card(events).items():
         out["card_corrections_ratio:" + card] = _ratio(row["corrections_after_recall"], row["recalls"], min_n)
+    corrections = [e for e in events if e["type"] == "correction"]
+    for cause in tel.REWORK_CAUSES:
+        out["rework_share:" + cause] = _ratio(sum(1 for e in corrections if (e.get("cause") or "G") == cause),
+                                              len(corrections), min_n)
+    asks = agg.ask_user_summary(events)
+    out["ask_user_per_task_day"] = _ratio(asks["questions"], asks["task_days"], min_n)
+    for name, row in agg.by_skill(events).items():
+        if row["calls"]:
+            out["skill_corrected_ratio:" + name] = _ratio(row["corrected"], row["calls"], min_n)
     return out
 
 
@@ -169,13 +184,17 @@ def valid_metric_key(key: object) -> bool:
         return False
     if key in FIXED_KEYS:
         return True
+    if key.startswith("rework_share:"):
+        return key[len("rework_share:"):] in tel.REWORK_CAUSES
     return any(key.startswith(p) and len(key) > len(p) and key == key.strip() for p in PREFIX_KEYS)
 
 
 def metric_direction_note(key: str) -> str:
     if key.startswith("gate_deny:"):
         return "看提案语义"
-    base = "card_corrections_ratio:" if key.startswith("card_corrections_ratio:") else key
+    if key == "rework_share:G":
+        return "仅提示（规则覆盖率）"
+    base = next((p for p in PREFIX_KEYS if key.startswith(p)), key)
     return "越低越好" if base in LOWER_IS_BETTER else "越高越好"
 
 
@@ -306,7 +325,7 @@ def sharing_problems(trials: dict[str, dict]) -> list[str]:
 
 def best_value(metric: str) -> float | None:
     """Value a metric cannot improve past; None when the metric has no natural optimum."""
-    if metric.startswith("gate_deny:"):
+    if metric.startswith("gate_deny:") or metric == "rework_share:G":
         return None
     if metric == "test_green_rate":
         return 1.0
@@ -440,6 +459,33 @@ def idle_cards(all_events: list[dict], end: dt.datetime) -> list[dict]:
             if latest[c].get("status") == "active" and c not in recalled and first_seen[c] <= lo]
 
 
+def rework_g_alert(cur: list[dict], prev: list[dict], min_n: int) -> dict | None:
+    """G (unclassified) share of corrections above G_SHARE_ALERT in both weeks, each with n >= min_n."""
+    shares = []
+    for events in (cur, prev):
+        corr = [e for e in events if e["type"] == "correction"]
+        if len(corr) < min_n or not corr:
+            return None
+        shares.append(sum(1 for e in corr if (e.get("cause") or "G") == "G") / len(corr))
+    if all(x > G_SHARE_ALERT for x in shares):
+        return {"this": shares[0], "prev": shares[1]}
+    return None
+
+
+def idle_skills(all_events: list[dict], end: dt.datetime) -> list[str]:
+    """Framework skills with 0 skill_use in the last IDLE_WEEKS weeks.
+
+    Suppressed while no skill_use event exists at all: before the signal is collected every skill would look idle.
+    """
+    hi = _fmt_ts(end)
+    lo = _fmt_ts(end - dt.timedelta(weeks=IDLE_WEEKS))
+    uses = [e for e in all_events if e["type"] == "skill_use" and e["ts"] < hi]
+    if not uses:
+        return []
+    used = {e.get("skill") for e in uses if e["ts"] >= lo}
+    return sorted(tel.KNOWN_SKILLS - used)
+
+
 # ---------------------------------------------------------------------------
 # Stage table
 # ---------------------------------------------------------------------------
@@ -459,11 +505,27 @@ def stage_table(metrics: dict, window: list[dict]) -> list[dict]:
                        f"review_confirmed={sum(_int(e.get('confirmed')) for e in reviews)}")
     else:
         review_cell = f"review findings/confirmed={NO_DATA}"
+    skills = agg.by_skill(window)
+
+    any_skill_signal = any(e["type"] == "skill_use" for e in window)
+
+    def skill_cell(name: str) -> str:
+        if not any_skill_signal:
+            return f"{name} 调用={NO_DATA}"
+        return f"{name} 调用={skills.get(name, {}).get('calls', 0)}"
+
+    req_cells = [_cell(metrics, "corrections_per_task_day"), _cell(metrics, "rework_share:A"),
+                 _cell(metrics, "ask_user_per_task_day")]
+    for name in REQ_SKILLS:
+        req_cells += [skill_cell(name), _cell(metrics, "skill_corrected_ratio:" + name)]
     return [
-        {"stage": "需求", "cells": [_cell(metrics, "corrections_per_task_day")]},
-        {"stage": "开发", "cells": [_cell(metrics, "rework_files_per_task"), _cell(metrics, "first_green_index_median")]},
-        {"stage": "测试", "cells": [_cell(metrics, "test_green_rate"), _cell(metrics, "bypass:skip_tests")]},
-        {"stage": "验收", "cells": [review_cell, _cell(metrics, "commits_after_review_per_task")]},
+        {"stage": "需求", "cells": req_cells},
+        {"stage": "开发", "cells": [_cell(metrics, "rework_files_per_task"), _cell(metrics, "first_green_index_median"),
+                                   _cell(metrics, "rework_share:C"), _cell(metrics, "rework_share:D")]},
+        {"stage": "测试", "cells": [_cell(metrics, "test_green_rate"), _cell(metrics, "bypass:skip_tests"),
+                                   _cell(metrics, "rework_share:F")]},
+        {"stage": "验收", "cells": [review_cell, _cell(metrics, "commits_after_review_per_task"),
+                                   _cell(metrics, "rework_share:E"), skill_cell("code-review")]},
     ]
 
 
@@ -501,6 +563,8 @@ def build(repo: Path, week: str, min_n: int) -> dict:
             "suspected_misblock": misblocks,
             "low_efficiency_cards": low_cards,
             "idle_cards": idle_cards(events, end),
+            "idle_skills": idle_skills(events, end),
+            "rework_g_alert": rework_g_alert(window, in_window(events, prev_start, prev_end), min_n),
             "trials_not_improved": [d["id"] for d in due if d["verdict"] == V_WORSE],
         },
         "stages": stage_table(metrics, window),
@@ -565,6 +629,12 @@ def render_md(data: dict) -> str:
                      f"recall 后纠正 {r['corrections_after_recall']}（比率 {r['ratio']:.2f}，n={r['n']}）{LOW_N_TAG if r['low_n'] else ''}")
     for r in sub["idle_cards"]:
         lines.append(f"- 闲置经验卡（建议归档）：{r['card']} 最近 {IDLE_WEEKS} 周 0 次 recall，最新卡片事件 {r['last_card_event']}")
+    for name in sub["idle_skills"]:
+        lines.append(f"- 闲置 skill（只列信号）：{name} 最近 {IDLE_WEEKS} 周 0 次调用")
+    if sub["rework_g_alert"]:
+        g = sub["rework_g_alert"]
+        lines.append(f"- 返工原因规则覆盖不足：G 类占比本周 {g['this']:.2f}、上周 {g['prev']:.2f}，连续两周超过 "
+                     f"{G_SHARE_ALERT:.0%}，建议调整分类规则")
     for i in sub["trials_not_improved"]:
         lines.append(f"- 到期未改善的在试项：{i}")
     L += lines or ["本周无"]
