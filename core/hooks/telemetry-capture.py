@@ -25,7 +25,7 @@ def _claude_dir() -> Path:
 
 _SEGMENT_SPLIT = re.compile(r"&&|\|\||[;|\n]")
 _VALUE_FLAGS = {"-m", "-F", "-C", "-c", "--message", "--file", "--author", "--date"}
-_SKIP_TESTS = re.compile(r"-DskipTests(?!=false)\b|-Dmaven\.test\.skip(?!=false)\b", re.IGNORECASE)
+_SKIP_TESTS = re.compile(r"-D(?:skipTests|maven\.test\.skip(?:\.exec)?)(?:=(?!false$).*)?$", re.IGNORECASE)
 _ASSIGN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 _GIT_OPTS_WITH_VALUE = {"-C", "-c", "--git-dir", "--work-tree", "--namespace"}
 _MAVEN_TEST_GOALS = ("test", "verify", "package", "install", "deploy")
@@ -152,13 +152,21 @@ def _is_test_segment(cmd: list[str]) -> bool:
     return False
 
 
+def _is_test_task(name: str) -> bool:
+    """Gradle task `test`, optionally project-qualified (`:test`, `:app:test`)."""
+    return name.strip().lower().rsplit(":", 1)[-1] == "test"
+
+
 def _gradle_excludes_test(rest: list[str]) -> bool:
     for i, t in enumerate(rest):
         low = t.lower()
         if low in ("-x", "--exclude-task"):
-            if i + 1 < len(rest) and rest[i + 1].strip().lower() == "test":
+            if i + 1 < len(rest) and _is_test_task(rest[i + 1]):
                 return True
-        elif low in ("-xtest", "--exclude-task=test"):
+        elif low.startswith("--exclude-task="):
+            if _is_test_task(low[len("--exclude-task="):]):
+                return True
+        elif low.startswith("-x") and _is_test_task(low[2:]):
             return True
     return False
 
@@ -188,7 +196,7 @@ def test_framework(command: str) -> str:
     """Framework name of the first test segment in the command ("" if none)."""
     for seg in _SEGMENT_SPLIT.split(command):
         cmd = _command_of(seg)[1]
-        if not _is_test_segment(cmd):
+        if not (_is_test_segment(cmd) and _segment_runs_tests(cmd)):
             continue
         name = _bare_name(cmd)
         if name.startswith(("pytest", "py")) or name.startswith("python"):

@@ -189,7 +189,7 @@ def test_git_env_allowlist(monkeypatch):
 
 def test_git_env_keeps_tls_auth_and_proxy_vars(monkeypatch):
     keep = ("GIT_SSL_CAINFO", "GIT_SSL_CAPATH", "GIT_SSL_CERT", "GIT_SSL_KEY", "GIT_SSL_CERT_PASSWORD_PROTECTED",
-            "GIT_SSL_NO_VERIFY", "GIT_ASKPASS", "GIT_PROXY_COMMAND", "GIT_HTTP_PROXY_AUTHMETHOD",
+            "GIT_SSL_NO_VERIFY", "GIT_PROXY_COMMAND", "GIT_HTTP_PROXY_AUTHMETHOD",
             "GIT_HTTP_LOW_SPEED_LIMIT", "GIT_HTTP_LOW_SPEED_TIME")
     for k in keep:
         monkeypatch.setenv(k, "v-" + k)
@@ -218,3 +218,8 @@ def test_upload_path_never_uses_user_env():
     assert "user_env=True" not in inspect.getsource(tel._run)
     assert inspect.signature(tel._git).parameters["user_env"].default is False
     assert inspect.signature(tel._local_git).parameters["user_env"].default is False
+
+
+def test_git_env_drops_askpass(monkeypatch):
+    monkeypatch.setenv("GIT_ASKPASS", "/usr/bin/some-ide-askpass")
+    assert "GIT_ASKPASS" not in tel._git_env(None, "u1")

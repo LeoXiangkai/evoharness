@@ -141,3 +141,27 @@ def test_uninstall_timeout_kills_grandchildren(tmp_path, monkeypatch):
         time.sleep(0.2)
     os.kill(pid, 9)
     pytest.fail("grandchild survived uninstall timeout")
+
+
+def test_run_killing_tree_kills_group_on_keyboard_interrupt(monkeypatch):
+    killed = []
+
+    class FakeProc:
+        pid = 424242
+
+        def wait(self, timeout=None):
+            if killed:
+                return 0
+            raise KeyboardInterrupt
+
+        def kill(self):
+            killed.append("kill")
+
+    monkeypatch.setattr(inst_tel.subprocess, "Popen", lambda *a, **k: FakeProc())
+    if os.name == "nt":
+        monkeypatch.setattr(inst_tel.subprocess, "run", lambda cmd, **k: killed.append(cmd[0]))
+    else:
+        monkeypatch.setattr(inst_tel.os, "killpg", lambda pid, sig: killed.append(("killpg", pid)))
+    with pytest.raises(KeyboardInterrupt):
+        inst_tel._run_killing_tree(["x"], {}, 5)
+    assert killed and killed[0] in (("killpg", 424242), "taskkill")

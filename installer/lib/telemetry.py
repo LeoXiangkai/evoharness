@@ -166,7 +166,7 @@ def _run_killing_tree(cmd: list[str], env: dict, timeout: int) -> None:
                             stderr=subprocess.DEVNULL, **kwargs)
     try:
         proc.wait(timeout=timeout)
-    except subprocess.TimeoutExpired:
+    except BaseException as exc:  # TimeoutExpired, KeyboardInterrupt, ...: never leave the tree running
         try:
             if os.name == "nt":
                 subprocess.run(["taskkill", "/T", "/F", "/PID", str(proc.pid)], capture_output=True,
@@ -181,6 +181,8 @@ def _run_killing_tree(cmd: list[str], env: dict, timeout: int) -> None:
             proc.wait(timeout=10)
         except Exception:
             pass
+        if not isinstance(exc, subprocess.TimeoutExpired):
+            raise
 
 
 def uninstall_report(home: Path, source: Path | None, timeout: int = 60) -> None:
