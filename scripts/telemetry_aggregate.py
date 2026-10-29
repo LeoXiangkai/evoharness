@@ -141,11 +141,19 @@ def by_skill(events: list[dict]) -> dict[str, dict]:
     return dict(sorted(out.items()))
 
 
+def active_task_days(events: list[dict]) -> int:
+    """Distinct user+task+day with any task-bearing event.
+
+    Not task_snapshot alone: a snapshot needs a commit on the task branch, so a day of corrections or
+    questions before the first commit would otherwise have no denominator.
+    """
+    return len({(ev["user"], ev["task"], ev["ts"][:10]) for ev in events if ev.get("task")})
+
+
 def ask_user_summary(events: list[dict]) -> dict:
     asks = [ev for ev in events if ev["type"] == "ask_user"]
     questions = sum(_int(ev.get("questions")) for ev in asks)
-    task_days = len({(ev["user"], ev.get("task"), ev["ts"][:10]) for ev in events
-                     if ev["type"] == "task_snapshot"})
+    task_days = active_task_days(events)
     return {"calls": len(asks), "questions": questions, "task_days": task_days,
             "per_task_day": (questions / task_days) if task_days else None}
 

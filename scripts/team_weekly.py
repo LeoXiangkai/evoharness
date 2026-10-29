@@ -148,9 +148,8 @@ def compute_metrics(events: list[dict], min_n: int) -> dict[str, dict]:
     greens = [t["first_green_index"] for t in agg.by_task(events).values() if t["first_green_index"]]
     out["first_green_index_median"] = {
         "value": float(statistics.median(greens)) if len(greens) >= min_n else None, "n": len(greens)}
-    snaps = [e for e in events if e["type"] == "task_snapshot"]
     out["corrections_per_task_day"] = _ratio(sum(1 for e in events if e["type"] == "correction"),
-                                             len(snaps), min_n)
+                                             agg.active_task_days(events), min_n)
     latest = latest_snapshots(events)
     out["rework_files_per_task"] = _ratio(sum(_int(s.get("files_touched_repeatedly")) for s in latest),
                                           len(latest), min_n)
@@ -459,9 +458,31 @@ def idle_cards(all_events: list[dict], end: dt.datetime) -> list[dict]:
             if latest[c].get("status") == "active" and c not in recalled and first_seen[c] <= lo]
 
 
+def _rules_order(version: str) -> tuple:
+    digits = version[1:]
+    return (int(digits), version) if version[:1] == "r" and digits.isdigit() else (-1, version)
+
+
+def rules_version(events: list[dict]) -> str | None:
+    """Newest cause_rules version among the corrections in events."""
+    versions = {e["cause_rules"] for e in events if e["type"] == "correction" and e.get("cause_rules") and e.get("cause")}
+    return max(versions, key=_rules_order) if versions else None
+
+
 def _classified_corrections(events: list[dict]) -> list[dict]:
-    """Corrections carrying a rule version; ones collected before the rules shipped have no cause and are left out."""
-    return [e for e in events if e["type"] == "correction" and e.get("cause_rules") and e.get("cause")]
+    """Corrections of the newest rule version only: shares from different keyword rules are not comparable.
+
+    Corrections collected before the rules shipped have no cause and are left out.
+    """
+    version = rules_version(events)
+    return [e for e in events if e["type"] == "correction" and e.get("cause_rules") == version and e.get("cause")]
+
+
+def drop_cross_version_rework(prev_metrics: dict, cur_version: str | None, prev_version: str | None) -> dict:
+    """Last week's rework shares under other keyword rules are not a baseline for this week."""
+    if cur_version is None or prev_version is None or cur_version == prev_version:
+        return prev_metrics
+    return {k: ({"value": None, "n": 0} if k.startswith("rework_share:") else v) for k, v in prev_metrics.items()}
 
 
 def rework_g_alert(cur: list[dict], prev: list[dict], min_n: int) -> dict | None:
@@ -549,7 +570,9 @@ def build(repo: Path, week: str, min_n: int) -> dict:
     window = in_window(events, start, end)
     prev_start, prev_end = week_bounds(prev_week)
     metrics = compute_metrics(window, min_n)
-    prev_metrics = load_prev_metrics(repo, prev_week, events, min_n)
+    prev_window = in_window(events, prev_start, prev_end)
+    prev_metrics = drop_cross_version_rework(load_prev_metrics(repo, prev_week, events, min_n),
+                                             rules_version(window), rules_version(prev_window))
     trials, problems = load_trials(repo)
     problems += sharing_problems(trials)
     week_end_date = (end - dt.timedelta(days=1)).date().isoformat()
@@ -561,7 +584,7 @@ def build(repo: Path, week: str, min_n: int) -> dict:
     return {
         "week": week, "prev_week": prev_week, "min_n": min_n,
         "window": {"start": _fmt_ts(start), "end": _fmt_ts(end)},
-        "overview": {"this": overview(window), "prev": overview(in_window(events, prev_start, prev_end))},
+        "overview": {"this": overview(window), "prev": overview(prev_window)},
         "metrics": metrics, "metrics_prev": prev_metrics,
         "trials_due": due,
         "subtraction": {
@@ -569,7 +592,7 @@ def build(repo: Path, week: str, min_n: int) -> dict:
             "low_efficiency_cards": low_cards,
             "idle_cards": idle_cards(events, end),
             "idle_skills": idle_skills(events, end),
-            "rework_g_alert": rework_g_alert(window, in_window(events, prev_start, prev_end), min_n),
+            "rework_g_alert": rework_g_alert(window, prev_window, min_n),
             "trials_not_improved": [d["id"] for d in due if d["verdict"] == V_WORSE],
         },
         "stages": stage_table(metrics, window),

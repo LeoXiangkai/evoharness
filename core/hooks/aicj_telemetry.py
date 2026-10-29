@@ -145,14 +145,15 @@ BUILTIN_SLASH = frozenset({
 })
 SKILL_LOG_DAYS = 14
 AFTER_SKILL_WINDOW_SECONDS = 600
-REWORK_RULES_VERSION = "r1"
-# Evaluation order A -> B -> F -> E -> C -> D; no match -> G. Matched case-insensitively against the
-# local correction text only; the text itself never enters an event.
+REWORK_RULES_VERSION = "r2"
+# The cause whose keyword appears earliest in the text wins (people state the problem before the remedy:
+# "函数名不对，测试也一起改" is naming, not testing); ties go to the order A, B, F, E, C, D; no match -> G.
+# Matched case-insensitively against the local correction text only; the text itself never enters an event.
 REWORK_RULES = (
     ("A", ("需求", "口径", "不是这个意思", "我要的是", "理解错", "不是我要的", "requirement")),
     ("B", ("漏了", "也要", "其他地方", "也得改", "同步改", "忘了", "影响到", "missed")),
     ("F", ("测试", "用例", "断言", "mock", "test")),
-    ("E", ("审查", "评审", "review", "规范", "命名", "注释", "不符合约定")),
+    ("E", ("审查", "评审", "review", "规范", "命名", "注释", "不符合约定", "函数名", "方法名", "变量名", "类名", "改名", "重命名")),
     ("C", ("环境", "配置", "端口", "代理", "依赖", "版本", "数据库", "数据不对", "权限", "登录", "proxy", "env")),
     ("D", ("报错", "bug", "异常", "空指针", "崩", "跑不起来", "不生效", "逻辑错", "error")),
 )
@@ -160,14 +161,16 @@ _SKILL_HASH_RE = re.compile(r"x-[0-9a-f]{10}")
 
 
 def classify_rework(text: object) -> str:
-    """Rework cause letter A..G for a correction text (rules r1)."""
+    """Rework cause letter A..G for a correction text (rules r2)."""
     if not isinstance(text, str) or not text.strip():
         return "G"
     low = text.lower()
+    best, best_pos = "G", len(low)
     for cause, words in REWORK_RULES:
-        if any(w in low for w in words):
-            return cause
-    return "G"
+        pos = min((i for i in (low.find(w) for w in words) if i >= 0), default=-1)
+        if 0 <= pos < best_pos:
+            best, best_pos = cause, pos
+    return best
 
 
 def skill_token(salt: str, name: object) -> str | None:
