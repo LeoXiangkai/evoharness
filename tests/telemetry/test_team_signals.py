@@ -65,13 +65,18 @@ def test_known_skills_match_framework_skill_dirs():
 
 
 # S4 ---------------------------------------------------------------------------
-def test_unknown_skill_is_hashed_and_known_kept():
+def test_skill_name_kept_verbatim_unless_unsafe():
     assert tel.skill_token("s", "code-review") == "code-review"
-    hashed = tel.skill_token("s", "my-private:skill")
-    assert hashed.startswith("x-") and len(hashed) == 12 and "private" not in hashed
+    assert tel.skill_token("s", "my-private:skill") == "my-private:skill"
+    hashed = tel.skill_token("s", "我的 skill")
+    assert hashed.startswith("x-") and len(hashed) == 12
     assert tel.skill_token("s", hashed) == hashed
-    assert tel.skill_token("other-salt", "my-private:skill") != hashed
+    assert tel.skill_token("other-salt", "我的 skill") != hashed
     assert tel.skill_token("s", "  ") is None and tel.skill_token("s", None) is None
+    phone_like = "1" + "3" * 10  # sanitize rejects it as a mobile number
+    for unsafe in (phone_like, "a" * 65):
+        assert tel.skill_token("s", unsafe).startswith("x-")
+    assert tel.skill_token("s", "a" * 64) == "a" * 64
 
 
 @pytest.mark.parametrize("prompt,name", [
@@ -99,10 +104,8 @@ def test_hook_emits_skill_use_for_tool_and_slash_but_not_builtin(claude, team):
         r = run_hook(claude, payload)
         assert r.returncode == 0 and r.stdout == ""
     uses = [e for e in spool_events(claude) if e["type"] == "skill_use"]
-    assert sorted((e["skill"][:2] if e["skill"].startswith("x-") else e["skill"], e["via"]) for e in uses) == [
-        ("code-review", "tool"), ("x-", "slash")]
-    blob = json.dumps(spool_events(claude))
-    assert "my-private-skill" not in blob and "secret-arg" not in blob
+    assert sorted((e["skill"], e["via"]) for e in uses) == [("code-review", "tool"), ("my-private-skill", "slash")]
+    assert "secret-arg" not in json.dumps(spool_events(claude))
 
 
 # S5 ---------------------------------------------------------------------------
@@ -122,6 +125,20 @@ def test_after_skill_links_only_same_session_within_window(claude, team, skill_t
     finally:
         tel._now = orig
     assert [e.get("after_skill") for e in evs] == (["code-review"] if expect else [None])
+
+
+@pytest.mark.parametrize("name", ["my-private:skill", "我的 skill"])
+def test_after_skill_equals_skill_use_token(claude, team, name):
+    now = dt.datetime(2026, 10, 28, tzinfo=dt.timezone.utc)
+    expected = tel.skill_token(str(tel.load_team(claude)["salt"]), name)
+    assert tel.record_skill(claude, "s1", name, "2026-10-27T10:00:00Z")
+    orig = tel._now
+    tel._now = lambda: now
+    try:
+        evs = _corrections(claude, [{"ts": "2026-10-27T10:02:00Z", "session_id": "s1", "prompt": "review 不对"}])
+    finally:
+        tel._now = orig
+    assert [e.get("after_skill") for e in evs] == [expected]
 
 
 # S6 ---------------------------------------------------------------------------
