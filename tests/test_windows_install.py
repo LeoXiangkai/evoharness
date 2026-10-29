@@ -231,3 +231,11 @@ def test_windows_script_passes_team_config_through() -> None:
     assert "[string]$TeamConfig" in text
     assert '$installArgs += "--team-config"; $installArgs += $TeamConfig' in text
     assert text.index('"--team-config"') > text.index('$installArgs = @("install")')
+
+
+def test_windows_script_follows_team_framework_repo_only_for_managed_clone() -> None:
+    text = (REPO / "scripts/windows/install.ps1").read_bytes().decode("utf-8-sig")
+    assert "Test-CollectRepoAccess" not in text  # the cross-platform installer probes the collect repo now
+    assert 'if ($PSBoundParameters.ContainsKey("RepoUrl")) { "" } else { Get-TeamFrameworkRepo $TeamConfig }' in text
+    assert "if ($teamRepo -and $managedClone) {" in text
+    assert text.index("$managedClone = $true") < text.index("if ($teamRepo -and $managedClone)")

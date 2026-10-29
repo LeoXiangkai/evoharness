@@ -165,3 +165,67 @@ def test_run_killing_tree_kills_group_on_keyboard_interrupt(monkeypatch):
     with pytest.raises(KeyboardInterrupt):
         inst_tel._run_killing_tree(["x"], {}, 5)
     assert killed and killed[0] in (("killpg", 424242), "taskkill")
+
+
+def _team_file(tmp_path, collect_repo):
+    team = tmp_path / "team-in.json"
+    team.write_text(json.dumps({"team_id": "team1", "collect_repo": str(collect_repo),
+                                "salt": "salt-abc", "branch": "main"}), encoding="utf-8")
+    return team
+
+
+def test_install_warns_but_succeeds_when_collect_repo_is_unreachable(tmp_path):
+    home = tmp_path / "home"
+    r = run_aicj("install", "--packs", "none", "--team-config", str(_team_file(tmp_path, tmp_path / "none.git")), home=home)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "cannot reach the team collect repo" in r.stdout + r.stderr
+    assert (home / ".claude/aicj/team.json").is_file()
+
+
+def test_install_stays_quiet_when_collect_repo_is_reachable(tmp_path):
+    bare = tmp_path / "collect.git"
+    subprocess.run(["git", "init", "-q", "--bare", str(bare)], check=True)
+    r = run_aicj("install", "--packs", "none", "--team-config", str(_team_file(tmp_path, bare)), home=tmp_path / "home")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "cannot reach the team collect repo" not in r.stdout + r.stderr
+
+
+def test_dry_run_does_not_probe_collect_repo(tmp_path):
+    r = run_aicj("install", "--dry-run", "--packs", "none", "--team-config",
+                 str(_team_file(tmp_path, tmp_path / "none.git")), home=tmp_path / "home")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "cannot reach the team collect repo" not in r.stdout + r.stderr
+
+
+def test_validate_team_bytes_accepts_framework_repo_and_rejects_dash():
+    assert b"gitee" in inst_tel.validate_team_bytes(_team(framework_repo="https://gitee.com/team/evoharness.git"))
+    for bad in ("--upload-pack=x", 3):
+        with pytest.raises(UserError):
+            inst_tel.validate_team_bytes(_team(framework_repo=bad))
+
+
+def _probe(monkeypatch, tmp_path, run):
+    monkeypatch.setattr(inst_tel, "_run_killing_tree", run)
+    team = inst_tel.validate_team_bytes(_team_file(tmp_path, "https://user:secret-token@git.example.test/t.git").read_bytes())
+    return inst_tel.probe_collect_repo(team, tmp_path / "home", REPO)
+
+
+def test_probe_reports_missing_git(monkeypatch, tmp_path):
+    def no_git(*a, **k):
+        raise FileNotFoundError("git")
+    assert "git is not installed" in _probe(monkeypatch, tmp_path, no_git)
+
+
+def test_probe_warns_on_timeout_without_leaking_credentials(monkeypatch, tmp_path):
+    warning = _probe(monkeypatch, tmp_path, lambda *a, **k: None)
+    assert "cannot reach the team collect repo yet (https://git.example.test/...)" in warning
+    assert "secret-token" not in warning and "user" not in warning.split("(")[1].split(")")[0]
+
+
+def test_probe_is_quiet_on_success(monkeypatch, tmp_path):
+    assert _probe(monkeypatch, tmp_path, lambda *a, **k: 0) is None
+
+
+def test_safe_name_drops_userinfo_and_scp_user():
+    assert inst_tel._safe_name("ssh://git@gitee.com:22/x/y.git") == "ssh://gitee.com:22/..."
+    assert inst_tel._safe_name("git@gitee.com:xkai/evoharness-telemetry.git") == "gitee.com:..."

@@ -655,6 +655,10 @@ def _run_install(
     team_bytes: bytes | None = None
     if options.team_config.strip():
         team_bytes = telemetry.fetch_team_config(options.team_config)
+        if not dry_run:
+            warning = telemetry.probe_collect_repo(team_bytes, home, source)
+            if warning:
+                report.warn(warning)
     elif TEAM_REL in previous:
         team_bytes = telemetry.existing_team_bytes(home)
 
