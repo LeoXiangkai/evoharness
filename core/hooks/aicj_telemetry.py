@@ -174,13 +174,13 @@ def classify_rework(text: object) -> str:
 
 
 def skill_token(salt: str, name: object) -> str | None:
-    """Framework skill name as-is, any other name as 'x-' + salted hash (idempotent on that form)."""
+    """Skill name as-is (private ones too); a name sanitize would reject becomes 'x-' + salted hash."""
     if not isinstance(name, str):
         return None
     name = name.strip()
     if not name:
         return None
-    if name in KNOWN_SKILLS or _SKILL_HASH_RE.fullmatch(name):
+    if _token_ok(name) or _SKILL_HASH_RE.fullmatch(name):
         return name
     return "x-" + _sha(salt, name)[:10]
 

@@ -30,7 +30,7 @@ Changed files: `core/hooks/aicj_telemetry.py`, `core/hooks/telemetry-capture.py`
 - command: `tests/telemetry/test_team_signals.py` — result: design tests S1–S9, S11 (42 cases) passed
 - command: team e2e (S10): temporary-HOME install with `--team-config` (lesson adapter registered) → real hook
   entry for Skill / slash / AskUserQuestion → upload → aggregate → `team_weekly.py` → doctor → uninstall —
-  result: passed; uploaded files contain no correction text, question text or private skill name
+  result: passed; uploaded files contain no correction text or question text; skill names are uploaded verbatim (user decision 2026-10-29)
 
 ## Review
 

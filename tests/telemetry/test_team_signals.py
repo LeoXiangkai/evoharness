@@ -65,12 +65,13 @@ def test_known_skills_match_framework_skill_dirs():
 
 
 # S4 ---------------------------------------------------------------------------
-def test_unknown_skill_is_hashed_and_known_kept():
+def test_skill_name_kept_verbatim_unless_unsafe():
     assert tel.skill_token("s", "code-review") == "code-review"
-    hashed = tel.skill_token("s", "my-private:skill")
-    assert hashed.startswith("x-") and len(hashed) == 12 and "private" not in hashed
+    assert tel.skill_token("s", "my-private:skill") == "my-private:skill"
+    hashed = tel.skill_token("s", "我的 skill")
+    assert hashed.startswith("x-") and len(hashed) == 12
     assert tel.skill_token("s", hashed) == hashed
-    assert tel.skill_token("other-salt", "my-private:skill") != hashed
+    assert tel.skill_token("other-salt", "我的 skill") != hashed
     assert tel.skill_token("s", "  ") is None and tel.skill_token("s", None) is None
 
 
@@ -99,10 +100,8 @@ def test_hook_emits_skill_use_for_tool_and_slash_but_not_builtin(claude, team):
         r = run_hook(claude, payload)
         assert r.returncode == 0 and r.stdout == ""
     uses = [e for e in spool_events(claude) if e["type"] == "skill_use"]
-    assert sorted((e["skill"][:2] if e["skill"].startswith("x-") else e["skill"], e["via"]) for e in uses) == [
-        ("code-review", "tool"), ("x-", "slash")]
-    blob = json.dumps(spool_events(claude))
-    assert "my-private-skill" not in blob and "secret-arg" not in blob
+    assert sorted((e["skill"], e["via"]) for e in uses) == [("code-review", "tool"), ("my-private-skill", "slash")]
+    assert "secret-arg" not in json.dumps(spool_events(claude))
 
 
 # S5 ---------------------------------------------------------------------------

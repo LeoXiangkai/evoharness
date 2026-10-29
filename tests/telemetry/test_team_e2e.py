@@ -191,10 +191,11 @@ def test_team_flow_end_to_end(tmp_path):
     assert (snap["commits"], snap["files_changed"], snap["files_touched_repeatedly"]) == (2, 3, 1)
     blob = content
     assert [(x["cause"], x["cause_rules"]) for x in rows if x["type"] == "correction"] == [("B", "r2")]
-    assert sorted((x["skill"][:2], x["via"]) for x in rows if x["type"] == "skill_use") == [("co", "tool"), ("x-", "slash")]
+    assert sorted((x["skill"], x["via"]) for x in rows if x["type"] == "skill_use") == [
+        ("code-review", "tool"), ("private-team-skill", "slash")]
     assert [x["questions"] for x in rows if x["type"] == "ask_user"] == [1]
     for leak in (str(repo), "never skip hooks", "no-verify", "wrong", "漏了", "other-callers", "salt-abc",
-                 "private-team-skill", "which-private-option"):
+                 "which-private-option"):
         assert leak not in blob
     user_hash = rows[0]["user"]
     assert {x["user"] for x in rows} == {user_hash}

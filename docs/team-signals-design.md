@@ -44,7 +44,7 @@
 
 | 字段 | 类型 | 说明 |
 |---|---|---|
-| `skill` | token | 名字在框架词表内记明文，否则 `x-<哈希>` |
+| `skill` | token | 记原名（私有 skill 也是）；名字含空格、中文等不合 token 格式或命中敏感模式时记 `x-<哈希>` |
 | `via` | enum `tool` / `slash` | Claude 调用 Skill 工具，或成员输入斜杠命令 |
 
 - 框架词表 = `core/skills/*` 与 `adapters/*/skills/*` 的目录名，写成常量；测试保证与目录一致。
@@ -131,7 +131,7 @@
 ## 7. 验收
 
 - pytest 全绿 0 skip；sanitize / template / context_budget 退出码 0。
-- S10 端到端通过；上传文件对纠错原话、问题文本、私有 skill 名检索 0 命中。
+- S10 端到端通过；上传文件对纠错原话、问题文本检索 0 命中。
 - 独立审查通过后合入 main。
 
 ## 8. 风险与决策点

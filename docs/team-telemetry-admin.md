@@ -60,7 +60,7 @@ Administrators run a weekly review on the collect repo: `python3 scripts/team_we
 A `--team-config` install (Windows `-TeamConfig`) always adds the `lesson` adapter, because rework causes come from its corrections log. Field contract: `docs/telemetry-fields.md`; design: `docs/team-signals-design.md`.
 
 - `rework_share:A..G`: share of the week's corrections per cause (A requirement, B missed impact, C environment/tool/data, D code defect, E review, F test). The keyword rules are coarse; G is unclassified and only reported, not judged. When G is above 50% two weeks in a row the subtraction section asks you to tune `REWORK_RULES` and bump its version.
-- `skill_corrected_ratio:<skill>`: corrections within 10 minutes after the skill in the same session, divided by its calls. Non-framework skills appear as `x-<hash>`.
+- `skill_corrected_ratio:<skill>`: corrections within 10 minutes after the skill in the same session, divided by its calls. Skills appear by their real name, private ones included; only a name that is not a plain token (spaces, non-ASCII, a secret-like pattern) appears as `x-<hash>`.
 - `ask_user_per_task_day`: AskUserQuestion questions per task-day; questions Claude asks in plain text are not counted.
 - `corrections_per_task_day` and `ask_user_per_task_day` divide by active task-days: distinct user + task + day over any event that carries a task, not only `task_snapshot` (a snapshot needs a commit on the task branch, so a day of corrections before the first commit would otherwise have no denominator).
 - `rework_share:*` uses only the corrections of the newest `cause_rules` version in the week. If last week's newest version differs, last week's shares show no data instead of being compared across keyword rules.
