@@ -39,7 +39,9 @@ function Install-WingetPackage([string]$Id) {
 function Test-Runnable([string]$Name) {
     # A command can exist yet fail to start (for example a truncated claude.exe), so run it instead of only resolving it.
     if (-not (Get-Command $Name -ErrorAction SilentlyContinue)) { return $false }
-    try { & $Name --version *> $null; return $LASTEXITCODE -eq 0 } catch { return $false }
+    # Windows PowerShell 5.1 turns native stderr into a terminating error under "Stop"; judge by exit code only.
+    $previous = $ErrorActionPreference; $ErrorActionPreference = "Continue"
+    try { & $Name --version *> $null; return $LASTEXITCODE -eq 0 } catch { return $false } finally { $ErrorActionPreference = $previous }
 }
 function Install-ClaudeCode {
     # The official installer calls exit on failure; run it in a child process so it cannot terminate this script.
@@ -58,8 +60,12 @@ function Install-ClaudeCode {
 function Test-CollectRepoAccess([string]$ConfigPath) {
     try { $repo = (Get-Content $ConfigPath -Raw -Encoding UTF8 | ConvertFrom-Json).collect_repo } catch { $repo = "" }
     if ([string]::IsNullOrWhiteSpace($repo)) { return }
-    & git ls-remote --heads $repo *> $null
-    if ($LASTEXITCODE -ne 0) {
+    $previous = $ErrorActionPreference; $ErrorActionPreference = "Continue"
+    $previousPrompt = $env:GIT_TERMINAL_PROMPT; $env:GIT_TERMINAL_PROMPT = "0"
+    try { & git ls-remote --heads $repo *> $null; $code = $LASTEXITCODE } catch { $code = 1 } finally {
+        $ErrorActionPreference = $previous; $env:GIT_TERMINAL_PROMPT = $previousPrompt
+    }
+    if ($code -ne 0) {
         Write-Warning "当前账号无法访问团队采集仓库，数据会先留在本机，上传会失败。请先登录有权限的 GitHub 账号（gh auth login，或 git clone 该仓库一次以保存凭据），再运行 aicj-telemetry report --force。"
     }
 }
