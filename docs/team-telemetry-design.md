@@ -165,7 +165,7 @@ SessionStart 钩子只做第 1、2 步的判断，到期才起脱离进程，不
  "upload_interval_hours": 24, "spool_max_mb": 20, "source": "<配置来源 URL 或路径>"}
 ```
 
-`team_id`、`collect_repo`、`salt` 必填，缺失时安装报错且不写入。`--team-config` 支持 `http(s)://`、`file://` 和本地路径。配置放在私有仓库时 urllib 拿不到 git 凭据，应先克隆再传本地路径。
+`team_id`、`collect_repo`、`salt` 必填，缺失时安装报错且不写入。可选 `framework_repo` 指向框架镜像（如 Gitee），Windows 安装脚本从它克隆并让自管克隆跟随它。带 `--team-config` 安装时用 `git ls-remote` 只读探测采集仓库，访问不到只告警、安装照常完成；dry-run 不探测。`--team-config` 支持 `http(s)://`、`file://` 和本地路径。配置放在私有仓库时 urllib 拿不到 git 凭据，应先克隆再传本地路径。
 
 ## doctor 检查项
 

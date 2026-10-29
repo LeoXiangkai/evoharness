@@ -81,11 +81,39 @@ def validate_team_bytes(data: bytes, label: str = "team config") -> bytes:
             raise UserError(f"{label}: {key} is required and must be a non-blank string")
     if raw["collect_repo"].strip().startswith("-"):
         raise UserError(f"{label}: collect_repo must not start with '-'")
+    framework = raw.get("framework_repo")
+    if framework is not None and (not isinstance(framework, str) or framework.strip().startswith("-")):
+        raise UserError(f"{label}: framework_repo must be a string that does not start with '-'")
     branch = raw.get("branch")
     if branch is not None:
         if not isinstance(branch, str) or (branch.strip() and not _safe_ref(branch.strip())):
             raise UserError(f"{label}: branch is not a safe git ref name")
     return (json.dumps(raw, ensure_ascii=False, indent=2, sort_keys=True) + "\n").encode("utf-8")
+
+
+PROBE_TIMEOUT = 30
+NO_ACCESS_HINT = (
+    "this machine cannot reach the team collect repo yet ({repo}); events stay local until it can. "
+    "Ask the admin to add your account to the repo with write access, sign in to the git host "
+    "(clone the repo once so git saves the credential, or add your SSH key), then run: aicj-telemetry report --force"
+)
+
+
+def probe_collect_repo(team_bytes: bytes, home: Path, source: Path | None) -> str | None:
+    """Read-only check that git can list the collect repo; returns a warning, or None when reachable."""
+    repo = json.loads(team_bytes.decode("utf-8"))["collect_repo"].strip()
+    lib = _lib(home, source)
+    env = lib._git_env() if lib is not None else {**os.environ, "GIT_TERMINAL_PROMPT": "0", "GCM_INTERACTIVE": "never"}
+    try:
+        proc = subprocess.run(["git", "ls-remote", "--heads", "--", repo], env=env, capture_output=True,
+                              stdin=subprocess.DEVNULL, timeout=PROBE_TIMEOUT)
+    except FileNotFoundError:
+        return "git is not installed; team events stay local until git is installed, then run: aicj-telemetry report --force"
+    except (OSError, subprocess.TimeoutExpired):
+        proc = None
+    if proc is not None and proc.returncode == 0:
+        return None
+    return NO_ACCESS_HINT.format(repo=_safe_name(repo))
 
 
 def fetch_team_config(spec: str) -> bytes:

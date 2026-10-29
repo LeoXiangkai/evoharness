@@ -4,7 +4,9 @@ Contract: `docs/team-telemetry-design.md`. Fields: `docs/telemetry-fields.md`.
 
 ## 1. Create the collect repo
 
-Create an empty private git repository that every member can push to (branch `main`). Events are pushed as `<date>/<user>-<install>.jsonl`.
+Create an empty private git repository that every member can push to (branch `main`). Events are pushed as `<date>/<user>-<install>.jsonl`. Any git host works; pick one every member reaches without a VPN (for teams in mainland China, Gitee).
+
+Adding a member: invite their account to the collect repo with write access and have them accept it before installing. Members sign in once per machine: clone the repo over https so git stores the credential, or add their SSH key to the host. `aicj install --team-config` runs a read-only `git ls-remote` against the collect repo and warns when it cannot reach it; the install still completes and events wait locally. Write access is only proven by the first upload, so check `aicj-telemetry status` after a member's first day.
 
 ## 2. Publish team.json
 
@@ -12,7 +14,7 @@ Create an empty private git repository that every member can push to (branch `ma
 {"team_id": "team1", "collect_repo": "<git url>", "salt": "<shared salt>", "branch": "main"}
 ```
 
-Optional: `upload_interval_hours`; `spool_max_mb` (default 20): when the local spool exceeds it, the oldest day files are deleted first. Host it at an http(s) URL, or hand members the file.
+Optional: `framework_repo`: git URL of an EvoHarness mirror members can reach (for example on Gitee). `install.ps1 -TeamConfig` clones from it, and switches the origin of its own managed clone (`~\src\evoharness`) to it, unless `-RepoUrl` is given; keep the mirror in sync with every push. `upload_interval_hours`; `spool_max_mb` (default 20): when the local spool exceeds it, the oldest day files are deleted first. Host it at an http(s) URL, or hand members the file.
 Members join with `aicj install --team-config <URL|file://|path>` (Windows: `install.ps1 -TeamConfig`). Without the flag nothing is collected, no hook is registered, and neither team.json nor `aicj/telemetry/` is created (hook code is installed but dormant).
 
 ## 3. Aggregate

@@ -69,21 +69,17 @@ function Install-ClaudeCode {
     if (Test-Path $localBin) { $env:Path = "$localBin$([IO.Path]::PathSeparator)$env:Path" }
     if (-not (Test-Runnable "claude")) { throw "Claude Code 安装后仍无法运行（claude --version 失败）；请按 https://docs.anthropic.com/en/docs/claude-code/setup 手动安装后重跑" }
 }
-function Test-CollectRepoAccess([string]$ConfigPath) {
-    try { $repo = (Get-Content $ConfigPath -Raw -Encoding UTF8 | ConvertFrom-Json).collect_repo } catch { $repo = "" }
-    if ([string]::IsNullOrWhiteSpace($repo)) { return }
-    if (-not (Test-Runnable "git")) {
-        Write-Warning "未找到可运行的 git，团队数据会先留在本机，上传需要 git。安装 git 后运行 aicj-telemetry report --force。"
-        return
+function Get-TeamFrameworkRepo([string]$Spec) {
+    # The team config may name a framework mirror reachable without a VPN (for example on Gitee).
+    if ([string]::IsNullOrWhiteSpace($Spec)) { return "" }
+    try {
+        if ($Spec -match '^https?://') { $team = Invoke-RestMethod -Uri $Spec -UseBasicParsing -TimeoutSec 15 }
+        else { $team = Get-Content $Spec -Raw -Encoding UTF8 | ConvertFrom-Json }
+        if ($team.framework_repo -is [string]) { return $team.framework_repo.Trim() }
+    } catch {
+        Write-Warning "读取团队配置中的 framework_repo 失败：$($_.Exception.Message)；使用默认仓库地址"
     }
-    $previous = $ErrorActionPreference; $ErrorActionPreference = "Continue"
-    $previousPrompt = $env:GIT_TERMINAL_PROMPT; $env:GIT_TERMINAL_PROMPT = "0"
-    try { & git ls-remote --heads $repo *> $null; $code = $LASTEXITCODE } catch { $code = 1 } finally {
-        $ErrorActionPreference = $previous; $env:GIT_TERMINAL_PROMPT = $previousPrompt
-    }
-    if ($code -ne 0) {
-        Write-Warning "当前账号无法访问团队采集仓库，数据会先留在本机，上传会失败。请先登录有权限的 GitHub 账号（gh auth login，或 git clone 该仓库一次以保存凭据），再运行 aicj-telemetry report --force。"
-    }
+    return ""
 }
 function Assert-ExitCode([string]$Action) {
     if ($LASTEXITCODE -ne 0) { throw "$Action 失败，退出码 $LASTEXITCODE" }
@@ -196,6 +192,7 @@ function Install-CcLauncher {
 }
 
 try {
+    $managedClone = $false
     if (-not $RepoDir) {
         $scriptRepo = if ($PSScriptRoot) { Split-Path (Split-Path $PSScriptRoot -Parent) -Parent }
         # A standalone downloaded copy has no repository two levels up; clone into the default location instead.
@@ -203,9 +200,12 @@ try {
             $RepoDir = $scriptRepo
         } else {
             $RepoDir = Join-Path $HOME "src\evoharness"
+            $managedClone = $true
         }
     }
     $RepoDir = [IO.Path]::GetFullPath($RepoDir)
+    $teamRepo = if ($PSBoundParameters.ContainsKey("RepoUrl")) { "" } else { Get-TeamFrameworkRepo $TeamConfig }
+    if ($teamRepo) { $RepoUrl = $teamRepo }
 
     if (-not $NoPrereqs) {
         if (-not (Test-Runnable "git")) { Install-WingetPackage "Git.Git" }
@@ -225,6 +225,11 @@ try {
     }
 
     if (Test-Path (Join-Path $RepoDir ".git")) {
+        # Only the installer-managed clone follows the team mirror; a checkout the user runs from keeps its own origin.
+        if ($teamRepo -and $managedClone) {
+            & git -C $RepoDir remote set-url origin $teamRepo
+            Assert-ExitCode "切换仓库地址"
+        }
         & git -C $RepoDir pull --ff-only
         Assert-ExitCode "仓库更新"
     } else {
@@ -282,7 +287,6 @@ try {
         if ($NoHud) { $installArgs += "--no-hud" }
         if (-not [string]::IsNullOrWhiteSpace($TeamConfig)) {
             $installArgs += "--team-config"; $installArgs += $TeamConfig
-            Test-CollectRepoAccess $TeamConfig
         }
         & py -3 installer/aicj.py @installArgs
         Assert-ExitCode "aicj 安装"

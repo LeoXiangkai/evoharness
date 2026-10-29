@@ -165,3 +165,40 @@ def test_run_killing_tree_kills_group_on_keyboard_interrupt(monkeypatch):
     with pytest.raises(KeyboardInterrupt):
         inst_tel._run_killing_tree(["x"], {}, 5)
     assert killed and killed[0] in (("killpg", 424242), "taskkill")
+
+
+def _team_file(tmp_path, collect_repo):
+    team = tmp_path / "team-in.json"
+    team.write_text(json.dumps({"team_id": "team1", "collect_repo": str(collect_repo),
+                                "salt": "salt-abc", "branch": "main"}), encoding="utf-8")
+    return team
+
+
+def test_install_warns_but_succeeds_when_collect_repo_is_unreachable(tmp_path):
+    home = tmp_path / "home"
+    r = run_aicj("install", "--packs", "none", "--team-config", str(_team_file(tmp_path, tmp_path / "none.git")), home=home)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "cannot reach the team collect repo" in r.stdout + r.stderr
+    assert (home / ".claude/aicj/team.json").is_file()
+
+
+def test_install_stays_quiet_when_collect_repo_is_reachable(tmp_path):
+    bare = tmp_path / "collect.git"
+    subprocess.run(["git", "init", "-q", "--bare", str(bare)], check=True)
+    r = run_aicj("install", "--packs", "none", "--team-config", str(_team_file(tmp_path, bare)), home=tmp_path / "home")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "cannot reach the team collect repo" not in r.stdout + r.stderr
+
+
+def test_dry_run_does_not_probe_collect_repo(tmp_path):
+    r = run_aicj("install", "--dry-run", "--packs", "none", "--team-config",
+                 str(_team_file(tmp_path, tmp_path / "none.git")), home=tmp_path / "home")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "cannot reach the team collect repo" not in r.stdout + r.stderr
+
+
+def test_validate_team_bytes_accepts_framework_repo_and_rejects_dash():
+    assert b"gitee" in inst_tel.validate_team_bytes(_team(framework_repo="https://gitee.com/team/evoharness.git"))
+    for bad in ("--upload-pack=x", 3):
+        with pytest.raises(UserError):
+            inst_tel.validate_team_bytes(_team(framework_repo=bad))
