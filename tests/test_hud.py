@@ -115,6 +115,10 @@ def test_default_install_configures_hud_and_selftest_passes(tmp_path: Path) -> N
     assert not settings_after.exists() or "statusLine" not in json.loads(settings_after.read_text(encoding="utf-8"))
 
 
+def _hud_file_paths(loaded: dict) -> set[str]:
+    return {e["path"] for e in loaded["entries"] if e["kind"] == "hud-file"}
+
+
 @pytest.mark.skipif(NODE is None, reason="需要 Node.js 执行 fake claude-hud setup.mjs")
 def test_hud_reinstall_is_idempotent_and_no_hud_skips(tmp_path: Path) -> None:
     home = tmp_path / "home"
@@ -134,13 +138,13 @@ def test_hud_reinstall_is_idempotent_and_no_hud_skips(tmp_path: Path) -> None:
     config_path.write_text(json.dumps({"user": True}) + "\n", encoding="utf-8")
     first_manifest = json.loads((home / ".claude/aicj/manifest.json").read_text(encoding="utf-8"))
     before = first_manifest["hud"]
-    hud_files = {e["path"] for e in first_manifest["entries"] if e["kind"] == "hud-file"}
+    hud_files = _hud_file_paths(first_manifest)
     assert ".claude/plugins/installed_plugins.json" in hud_files
     second = run_aicj("install", home=home, env=env)
     assert second.returncode == 0, second.stdout + second.stderr
     assert "no longer shipped" not in second.stdout
     second_manifest = json.loads((home / ".claude/aicj/manifest.json").read_text(encoding="utf-8"))
-    assert {e["path"] for e in second_manifest["entries"] if e["kind"] == "hud-file"} == hud_files
+    assert _hud_file_paths(second_manifest) == hud_files
     calls = [json.loads(line) for line in log.read_text(encoding="utf-8").splitlines()]
     assert sum(call[:3] == ["plugin", "install", "claude-hud@claude-hud"] for call in calls) == 1
     assert json.loads(config_path.read_text(encoding="utf-8")) == {"user": True}

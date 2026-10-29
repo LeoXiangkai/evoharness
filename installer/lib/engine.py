@@ -34,6 +34,7 @@ HOOK_PATH_MARK = settings.HOOK_PATH_MARK
 OWNED_ACTIONS = (conflict.CREATED, conflict.REPLACED)
 UPDATED = "updated"
 SKILL_DIR = "skill-dir"
+HUD_FILE = "hud-file"
 # a hook may only be registered when its script is actually in place
 HOOK_READY_ACTIONS = (conflict.CREATED, conflict.REPLACED, conflict.ADOPTED, conflict.ADOPTED_SYMLINK)
 
@@ -751,7 +752,7 @@ def _run_install(
     if not dry_run:
         for path, digest in hud.runtime_artifacts(home).items():
             if path not in hud_before:
-                hud_entries.append(manifest.Entry(path, "hud-file", conflict.CREATED, digest))
+                hud_entries.append(manifest.Entry(path, HUD_FILE, conflict.CREATED, digest))
 
     ordered = [op.entry for op in file_ops + codex_ops]
     ordered.extend(op.entry for op in generated_ops)
@@ -760,11 +761,11 @@ def _run_install(
     for path, entry in previous.items():
         if path in names:
             continue
-        keep_kind = entry.kind in ("file", "symlink", "skill-copy", SKILL_DIR, "hud-file")
+        keep_kind = entry.kind in ("file", "symlink", "skill-copy", SKILL_DIR, HUD_FILE)
         if keep_kind and entry.action in OWNED_ACTIONS:
             # hud-file entries are Claude Code files recorded when the plugin was first installed; a reinstall
             # does not recreate them, so carrying them over is the normal case, not a dropped source file.
-            if entry.kind != "hud-file":
+            if entry.kind != HUD_FILE:
                 report.note(f"{path}: no longer shipped, kept and still tracked for uninstall")
             ordered.append(entry)
     ordered.extend(hook_entries)
