@@ -762,7 +762,10 @@ def _run_install(
             continue
         keep_kind = entry.kind in ("file", "symlink", "skill-copy", SKILL_DIR, "hud-file")
         if keep_kind and entry.action in OWNED_ACTIONS:
-            report.note(f"{path}: no longer shipped, kept and still tracked for uninstall")
+            # hud-file entries are Claude Code files recorded when the plugin was first installed; a reinstall
+            # does not recreate them, so carrying them over is the normal case, not a dropped source file.
+            if entry.kind != "hud-file":
+                report.note(f"{path}: no longer shipped, kept and still tracked for uninstall")
             ordered.append(entry)
     ordered.extend(hook_entries)
     ordered.append(md_entry)
