@@ -73,6 +73,10 @@ def test_skill_name_kept_verbatim_unless_unsafe():
     assert tel.skill_token("s", hashed) == hashed
     assert tel.skill_token("other-salt", "我的 skill") != hashed
     assert tel.skill_token("s", "  ") is None and tel.skill_token("s", None) is None
+    phone_like = "1" + "3" * 10  # sanitize rejects it as a mobile number
+    for unsafe in (phone_like, "a" * 65):
+        assert tel.skill_token("s", unsafe).startswith("x-")
+    assert tel.skill_token("s", "a" * 64) == "a" * 64
 
 
 @pytest.mark.parametrize("prompt,name", [
@@ -121,6 +125,20 @@ def test_after_skill_links_only_same_session_within_window(claude, team, skill_t
     finally:
         tel._now = orig
     assert [e.get("after_skill") for e in evs] == (["code-review"] if expect else [None])
+
+
+@pytest.mark.parametrize("name", ["my-private:skill", "我的 skill"])
+def test_after_skill_equals_skill_use_token(claude, team, name):
+    now = dt.datetime(2026, 10, 28, tzinfo=dt.timezone.utc)
+    expected = tel.skill_token(str(tel.load_team(claude)["salt"]), name)
+    assert tel.record_skill(claude, "s1", name, "2026-10-27T10:00:00Z")
+    orig = tel._now
+    tel._now = lambda: now
+    try:
+        evs = _corrections(claude, [{"ts": "2026-10-27T10:02:00Z", "session_id": "s1", "prompt": "review 不对"}])
+    finally:
+        tel._now = orig
+    assert [e.get("after_skill") for e in evs] == [expected]
 
 
 # S6 ---------------------------------------------------------------------------

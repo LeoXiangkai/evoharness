@@ -8,7 +8,7 @@
 
 **目标**
 - 返工原因：每条用户纠错在**成员本机**归入 A–G 一类，只上传类别字母。
-- skill 使用：记录每次 skill 调用；框架自带的 skill 记名字，其他只记哈希；记录调用后同会话内是否被纠正。
+- skill 使用：记录每次 skill 调用；skill 名原样记录（含私有和插件 skill），只有不符合上传字段格式的名字（含空格、非 ASCII、超长或像密钥）才记哈希；记录调用后同会话内是否被纠正。
 - 询问次数：记录 Claude 通过 `AskUserQuestion` 向成员提问的问题数。
 
 **非目标**
@@ -48,7 +48,7 @@
 | `via` | enum `tool` / `slash` | Claude 调用 Skill 工具，或成员输入斜杠命令 |
 
 - 框架词表 = `core/skills/*` 与 `adapters/*/skills/*` 的目录名，写成常量；测试保证与目录一致。
-- 插件 skill 名（`plugin:skill`）同样按词表判断，不在表内就哈希。
+- 插件 skill 名（`plugin:skill`）同样原样记录。
 - 斜杠命令排除 Claude Code 内置命令（`/help`、`/clear`、`/compact`、`/model` 等，固定列表），不产生事件。
 - 本机另写一份 `telemetry/skill-log.jsonl`（会话哈希、时间、skill 名），只供 3.1 的 `after_skill` 关联，保留 14 天，不上传。
 
@@ -108,7 +108,7 @@
 
 ## 5. 隐私与失败隔离
 
-- 上传内容只有类别字母、规则版本、词表内的 skill 名或哈希、问题数。
+- 上传内容只有类别字母、规则版本、skill 名（不合格式时为哈希）、问题数。
 - 原话与问题文本只在本机分类时读取，不写入事件、spool 和 skill-log。
 - 分类、关联、写 skill-log 任一步出错都吞掉，不影响 Claude Code 操作和其他事件。
 
@@ -119,7 +119,7 @@
 | S1 | 关键词规则按顺序分类，未命中为 G | unit | 每类至少 2 条样本句 + 冲突句（「测试报错」→ F） |
 | S2 | correction 事件不含原话 | unit | 事件序列化后不含样本原话任一片段 |
 | S3 | 框架词表与 `core/skills`、`adapters/*/skills` 目录一致 | unit | 集合相等 |
-| S4 | 词表外 skill 名转哈希；内置斜杠命令不出事件 | unit | `x-` 前缀；`/help` 无事件 |
+| S4 | skill 名原样保留，不合格式（空格/非 ASCII/超长/像密钥）才转哈希；内置斜杠命令不出事件 | unit | 原名保留、`x-` 前缀；`/help` 无事件 |
 | S5 | `after_skill` 关联：10 分钟内同会话命中，超时或跨会话不命中 | unit | 三种情况 |
 | S6 | `ask_user` 问题数与重复触发去重 | unit | 同 tool_use_id 两次只一条 |
 | S7 | skill-log 超过 14 天的行被清掉，且不进上传 | unit | 文件内容 + 上传文件扫描 |
@@ -139,4 +139,4 @@
 - **返工原因依赖 lesson 适配器**：纠错只由 lesson 适配器采集。团队安装若不带 lesson，返工原因整块为空。已定：带 `--team-config`（Windows `-TeamConfig`）安装时自动加入 lesson 适配器；用户显式给的适配器列表保留并追加 lesson。
 - **关键词分类精度未知**：上线前无真实数据可校准，靠 G 占比和管理员抽查调规则。
 - **新增 UserPromptSubmit hook**：每次提交提示词多一次进程启动（毫秒级），只做前缀判断。
-- **Claude Code 内置命令列表会变**：漏掉的内置命令会以哈希形式出现，管理员能看到但不影响判断。
+- **Claude Code 内置命令列表会变**：漏掉的内置命令会以原名出现在 skill 使用里，管理员能看到但不影响判断。

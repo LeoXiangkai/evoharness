@@ -131,6 +131,7 @@ KNOWN_LAYERS = frozenset({"backend-compile", "backend-unit", "service-start", "a
 # core/hooks/push-review-gate.py and core/bin/git-safe.
 KNOWN_RULE_TAGS = frozenset({"push-review-gate", "git-safe"})
 # Framework skills: directory names under core/skills/* and adapters/*/skills/* (tests keep this in sync).
+# Not used for hashing: skill names upload verbatim; this only feeds the weekly unused-skills list.
 KNOWN_SKILLS = frozenset({
     "add-module", "auto-sdd", "code-review", "flow", "git-commit", "local-verify", "prd", "qa-baseline",
     "qa-testcase-pro", "req-analysis", "req-intake", "sdd-pipeline", "executor-handoff-ops", "team-weekly",
