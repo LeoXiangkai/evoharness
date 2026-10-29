@@ -73,9 +73,16 @@ function Get-TeamFrameworkRepo([string]$Spec) {
     # The team config may name a framework mirror reachable without a VPN (for example on Gitee).
     if ([string]::IsNullOrWhiteSpace($Spec)) { return "" }
     try {
-        if ($Spec -match '^https?://') { $team = Invoke-RestMethod -Uri $Spec -UseBasicParsing -TimeoutSec 15 }
-        else { $team = Get-Content $Spec -Raw -Encoding UTF8 | ConvertFrom-Json }
-        if ($team.framework_repo -is [string]) { return $team.framework_repo.Trim() }
+        # Raw-file hosts serve text/plain, which Invoke-RestMethod leaves unparsed.
+        if ($Spec -match '^https?://') { $raw = (Invoke-WebRequest -Uri $Spec -UseBasicParsing -TimeoutSec 15).Content }
+        else { $raw = Get-Content $Spec -Raw -Encoding UTF8 }
+        $team = $raw | ConvertFrom-Json
+        if ($team.framework_repo -is [string]) {
+            $repo = $team.framework_repo.Trim()
+            # A leading dash would reach git clone / remote set-url as an option.
+            if ($repo.StartsWith("-")) { throw "framework_repo 不能以 - 开头" }
+            return $repo
+        }
     } catch {
         Write-Warning "读取团队配置中的 framework_repo 失败：$($_.Exception.Message)；使用默认仓库地址"
     }

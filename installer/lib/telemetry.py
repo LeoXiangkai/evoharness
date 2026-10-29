@@ -25,6 +25,13 @@ LIB_REL = "hooks/aicj/aicj_telemetry.py"
 FETCH_TIMEOUT = 15
 MAX_BYTES = 64 * 1024
 _TOKEN_RE = re.compile(r"[A-Za-z0-9._:+-]{1,64}")
+_SCP_RE = re.compile(r"[^/@:\s]+@([^/:\s]+):")
+PROBE_TIMEOUT = 30
+NO_ACCESS_HINT = (
+    "this machine cannot reach the team collect repo yet ({repo}); events stay local until it can. "
+    "Ask the admin to add your account to the repo with write access, sign in to the git host "
+    "(clone the repo once so git saves the credential, or add your SSH key), then run: aicj-telemetry report --force"
+)
 
 
 def _safe_ref(name: str) -> bool:
@@ -58,8 +65,12 @@ def _read_spec(spec: str) -> bytes:
 
 
 def _safe_name(spec: str) -> str:
+    """Scheme and host only: userinfo may carry a token."""
     parsed = urlparse(spec)
-    return f"{parsed.scheme}://{parsed.netloc}/..." if parsed.scheme in ("http", "https") else spec
+    if parsed.scheme in ("http", "https", "ssh", "git"):
+        return f"{parsed.scheme}://{parsed.netloc.rpartition('@')[2]}/..."
+    scp = _SCP_RE.match(spec)
+    return f"{scp.group(1)}:..." if scp else spec
 
 
 def validate_team_bytes(data: bytes, label: str = "team config") -> bytes:
@@ -91,27 +102,24 @@ def validate_team_bytes(data: bytes, label: str = "team config") -> bytes:
     return (json.dumps(raw, ensure_ascii=False, indent=2, sort_keys=True) + "\n").encode("utf-8")
 
 
-PROBE_TIMEOUT = 30
-NO_ACCESS_HINT = (
-    "this machine cannot reach the team collect repo yet ({repo}); events stay local until it can. "
-    "Ask the admin to add your account to the repo with write access, sign in to the git host "
-    "(clone the repo once so git saves the credential, or add your SSH key), then run: aicj-telemetry report --force"
-)
-
-
 def probe_collect_repo(team_bytes: bytes, home: Path, source: Path | None) -> str | None:
     """Read-only check that git can list the collect repo; returns a warning, or None when reachable."""
     repo = json.loads(team_bytes.decode("utf-8"))["collect_repo"].strip()
     lib = _lib(home, source)
-    env = lib._git_env() if lib is not None else {**os.environ, "GIT_TERMINAL_PROMPT": "0", "GCM_INTERACTIVE": "never"}
+    if lib is not None:
+        env = lib._git_env()
+    else:
+        env = {**os.environ, "GIT_TERMINAL_PROMPT": "0", "GCM_INTERACTIVE": "never"}
+        if not (env.get("GIT_SSH_COMMAND") or env.get("GIT_SSH")):
+            env["GIT_SSH_COMMAND"] = "ssh -o BatchMode=yes"  # ssh prompts on /dev/tty, past GIT_TERMINAL_PROMPT
     try:
-        proc = subprocess.run(["git", "ls-remote", "--heads", "--", repo], env=env, capture_output=True,
-                              stdin=subprocess.DEVNULL, timeout=PROBE_TIMEOUT)
+        # Kill the whole tree on timeout: ssh or a credential helper can outlive git and hold the probe open.
+        code = _run_killing_tree(["git", "ls-remote", "--heads", "--", repo], env, PROBE_TIMEOUT)
     except FileNotFoundError:
         return "git is not installed; team events stay local until git is installed, then run: aicj-telemetry report --force"
-    except (OSError, subprocess.TimeoutExpired):
-        proc = None
-    if proc is not None and proc.returncode == 0:
+    except OSError:
+        code = None
+    if code == 0:
         return None
     return NO_ACCESS_HINT.format(repo=_safe_name(repo))
 
@@ -183,8 +191,10 @@ def emit_install(home: Path, source: Path | None, command: str, ok: bool, *,
         return
 
 
-def _run_killing_tree(cmd: list[str], env: dict, timeout: int) -> None:
-    """Run cmd in its own process group/session; on timeout kill the whole tree (git grandchildren included)."""
+def _run_killing_tree(cmd: list[str], env: dict, timeout: int) -> int | None:
+    """Run cmd in its own process group/session; on timeout kill the whole tree (git grandchildren included).
+
+    Returns the exit code, or None when it timed out."""
     kwargs: dict = {}
     if os.name == "nt":
         kwargs["creationflags"] = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
@@ -193,7 +203,7 @@ def _run_killing_tree(cmd: list[str], env: dict, timeout: int) -> None:
     proc = subprocess.Popen(cmd, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                             stderr=subprocess.DEVNULL, **kwargs)
     try:
-        proc.wait(timeout=timeout)
+        return proc.wait(timeout=timeout)
     except BaseException as exc:  # TimeoutExpired, KeyboardInterrupt, ...: never leave the tree running
         try:
             if os.name == "nt":
