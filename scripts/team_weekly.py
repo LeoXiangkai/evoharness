@@ -463,9 +463,13 @@ def _rules_order(version: str) -> tuple:
     return (int(digits), version) if version[:1] == "r" and digits.isdigit() else (-1, version)
 
 
+def _is_classified(e: dict) -> bool:
+    return e["type"] == "correction" and bool(e.get("cause_rules")) and bool(e.get("cause"))
+
+
 def rules_version(events: list[dict]) -> str | None:
     """Newest cause_rules version among the corrections in events."""
-    versions = {e["cause_rules"] for e in events if e["type"] == "correction" and e.get("cause_rules") and e.get("cause")}
+    versions = {e["cause_rules"] for e in events if _is_classified(e)}
     return max(versions, key=_rules_order) if versions else None
 
 
@@ -475,7 +479,7 @@ def _classified_corrections(events: list[dict]) -> list[dict]:
     Corrections collected before the rules shipped have no cause and are left out.
     """
     version = rules_version(events)
-    return [e for e in events if e["type"] == "correction" and e.get("cause_rules") == version and e.get("cause")]
+    return [e for e in events if _is_classified(e) and e["cause_rules"] == version]
 
 
 def drop_cross_version_rework(prev_metrics: dict, cur_version: str | None, prev_version: str | None) -> dict:
@@ -486,7 +490,12 @@ def drop_cross_version_rework(prev_metrics: dict, cur_version: str | None, prev_
 
 
 def rework_g_alert(cur: list[dict], prev: list[dict], min_n: int) -> dict | None:
-    """G (unclassified) share of classified corrections above G_SHARE_ALERT in both weeks, each with n >= min_n."""
+    """G (unclassified) share of classified corrections above G_SHARE_ALERT in both weeks, each with n >= min_n.
+
+    Weeks under different keyword rules are not compared: the new rules may already cover what G caught.
+    """
+    if rules_version(cur) != rules_version(prev):
+        return None
     shares = []
     for events in (cur, prev):
         corr = _classified_corrections(events)

@@ -215,6 +215,12 @@ def test_g_share_alert_needs_two_weeks_above_half():
     assert tw.rework_g_alert(this, prev_hi[:10], 20) is None
 
 
+def test_g_share_alert_skips_weeks_under_different_rules():
+    this = sane(_signal_rows())
+    prev_r2 = sane([ev(700 + i, "correction", "2026-10-14T10:00:00Z", cause="G", cause_rules="r2") for i in range(20)])
+    assert tw.rework_g_alert(this, prev_r2, 20) is None
+
+
 def test_idle_skills_listed_only_once_skill_signal_exists():
     end = dt.datetime(2026, 10, 26, tzinfo=dt.timezone.utc)
     assert tw.idle_skills([], end) == []

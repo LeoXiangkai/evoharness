@@ -41,18 +41,30 @@ function Test-Runnable([string]$Name) {
     if (-not (Get-Command $Name -ErrorAction SilentlyContinue)) { return $false }
     # Windows PowerShell 5.1 turns native stderr into a terminating error under "Stop"; judge by exit code only.
     $previous = $ErrorActionPreference; $ErrorActionPreference = "Continue"
-    try { & $Name --version *> $null; return $LASTEXITCODE -eq 0 } catch { return $false } finally { $ErrorActionPreference = $previous }
+    # A function or alias leaves $LASTEXITCODE untouched; clear it so an earlier native call's 0 cannot pass for this one.
+    $global:LASTEXITCODE = $null
+    try {
+        & $Name --version *> $null
+        return ($null -ne $LASTEXITCODE) -and ($LASTEXITCODE -eq 0)
+    } catch {
+        return $false
+    } finally {
+        $ErrorActionPreference = $previous
+    }
 }
 function Install-ClaudeCode {
     # The official installer calls exit on failure; run it in a child process so it cannot terminate this script.
     $installer = Join-Path ([IO.Path]::GetTempPath()) "claude-install-$PID.ps1"
     Invoke-WebRequest https://claude.ai/install.ps1 -OutFile $installer -UseBasicParsing
+    $previous = $ErrorActionPreference; $ErrorActionPreference = "Continue"
     try {
         & powershell -NoProfile -ExecutionPolicy Bypass -File $installer
-        Assert-ExitCode "Claude Code 官方安装器"
+        $code = $LASTEXITCODE
     } finally {
+        $ErrorActionPreference = $previous
         Remove-Item $installer -Force -ErrorAction SilentlyContinue
     }
+    if ($code -ne 0) { throw "Claude Code 官方安装器 失败，退出码 $code" }
     $localBin = Join-Path $HOME ".local\bin"
     if (Test-Path $localBin) { $env:Path = "$localBin$([IO.Path]::PathSeparator)$env:Path" }
     if (-not (Test-Runnable "claude")) { throw "Claude Code 安装后仍无法运行（claude --version 失败）；请按 https://docs.anthropic.com/en/docs/claude-code/setup 手动安装后重跑" }
@@ -60,6 +72,10 @@ function Install-ClaudeCode {
 function Test-CollectRepoAccess([string]$ConfigPath) {
     try { $repo = (Get-Content $ConfigPath -Raw -Encoding UTF8 | ConvertFrom-Json).collect_repo } catch { $repo = "" }
     if ([string]::IsNullOrWhiteSpace($repo)) { return }
+    if (-not (Test-Runnable "git")) {
+        Write-Warning "未找到可运行的 git，团队数据会先留在本机，上传需要 git。安装 git 后运行 aicj-telemetry report --force。"
+        return
+    }
     $previous = $ErrorActionPreference; $ErrorActionPreference = "Continue"
     $previousPrompt = $env:GIT_TERMINAL_PROMPT; $env:GIT_TERMINAL_PROMPT = "0"
     try { & git ls-remote --heads $repo *> $null; $code = $LASTEXITCODE } catch { $code = 1 } finally {
