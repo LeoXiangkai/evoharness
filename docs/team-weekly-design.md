@@ -44,7 +44,7 @@
 | `install_failure_rate` | 失败 install / 全部 install（`command=install`） | 越低越好 |
 | `test_green_rate` | `green` 的 test_run / 全部 test_run | 越高越好 |
 | `first_green_index_median` | 有过绿灯的任务，`first_green_index` 中位数 | 越低越好 |
-| `corrections_per_task_day` | correction 数 / task_snapshot 数 | 越低越好 |
+| `corrections_per_task_day` | correction 数 / 活跃任务天数（带 task 的任意事件按用户+任务+日期去重） | 越低越好 |
 | `rework_files_per_task` | 最新快照 `files_touched_repeatedly` 之和 / 任务数 | 越低越好 |
 | `commits_after_review_per_task` | 最新快照 `commits_after_review` 之和 / 任务数 | 越低越好 |
 | `bypass_total` / `bypass:<kind>` | bypass 计数（按 kind） | 越低越好 |

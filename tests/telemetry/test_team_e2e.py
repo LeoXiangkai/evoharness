@@ -190,7 +190,7 @@ def test_team_flow_end_to_end(tmp_path):
     snap = next(x for x in rows if x["type"] == "task_snapshot")
     assert (snap["commits"], snap["files_changed"], snap["files_touched_repeatedly"]) == (2, 3, 1)
     blob = content
-    assert [(x["cause"], x["cause_rules"]) for x in rows if x["type"] == "correction"] == [("B", "r1")]
+    assert [(x["cause"], x["cause_rules"]) for x in rows if x["type"] == "correction"] == [("B", "r2")]
     assert sorted((x["skill"][:2], x["via"]) for x in rows if x["type"] == "skill_use") == [("co", "tool"), ("x-", "slash")]
     assert [x["questions"] for x in rows if x["type"] == "ask_user"] == [1]
     for leak in (str(repo), "never skip hooks", "no-verify", "wrong", "漏了", "other-callers", "salt-abc",
@@ -222,7 +222,7 @@ def test_team_flow_end_to_end(tmp_path):
     assert "## By day" in md and "## By user hash" in md and "## By task" in md and "## By lesson card" in md and DAY in md and user_hash in md
     assert str(repo) not in md and "event_id" not in md
 
-    assert data["rework_cause"]["r1"]["counts"] == {"B": 1}
+    assert data["rework_cause"]["r2"]["counts"] == {"B": 1}
     assert data["skill"]["code-review"]["calls"] == 1 and data["ask_user"]["questions"] == 1
     wk = subprocess.run([sys.executable, str(WEEKLY), "--repo", str(clone), "--week", "2026-W44", "--format", "json",
                          "--min-n", "1"], capture_output=True, text=True, timeout=120)

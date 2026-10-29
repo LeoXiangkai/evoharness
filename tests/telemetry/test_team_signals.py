@@ -9,7 +9,7 @@ import pytest
 
 from .conftest import REPO_ROOT, spool_events, write_log
 from .test_capture import cap, run_hook
-from .test_team_weekly import WEEK, ev, make_repo, metrics_for, sane, tw
+from .test_team_weekly import WEEK, ev, make_repo, metrics_for, sane, tk, tw
 
 import aicj_telemetry as tel  # noqa: E402
 
@@ -31,6 +31,8 @@ SKILL_LOG = "aicj/telemetry/skill-log.jsonl"
     ("数据库连不上", "C"),
     ("还是报错，空指针", "D"),
     ("there is a BUG here", "D"),
+    ("你刚才写的函数名不对，应该叫 add_numbers，不是 add，测试也一起改。", "E"),  # problem before remedy
+    ("测试也要补，另外命名不对", "F"),  # earliest keyword wins over rule order
     ("再来一次", "G"),
     ("", "G"),
     (None, "G"),
@@ -213,6 +215,12 @@ def test_g_share_alert_needs_two_weeks_above_half():
     assert tw.rework_g_alert(this, prev_hi[:10], 20) is None
 
 
+def test_g_share_alert_skips_weeks_under_different_rules():
+    this = sane(_signal_rows())
+    prev_r2 = sane([ev(700 + i, "correction", "2026-10-14T10:00:00Z", cause="G", cause_rules="r2") for i in range(20)])
+    assert tw.rework_g_alert(this, prev_r2, 20) is None
+
+
 def test_idle_skills_listed_only_once_skill_signal_exists():
     end = dt.datetime(2026, 10, 26, tzinfo=dt.timezone.utc)
     assert tw.idle_skills([], end) == []
@@ -290,3 +298,28 @@ def test_hook_process_exits_zero_when_skill_log_is_unwritable(claude, team):
         r = run_hook(claude, payload)
         assert (r.returncode, r.stdout) == (0, "")
     assert [e["via"] for e in spool_events(claude) if e["type"] == "skill_use"] == ["tool", "slash"]
+
+
+def test_task_day_denominator_counts_days_without_a_snapshot():
+    # day 1: a correction and a question before any commit (no snapshot); day 2: a snapshot
+    rows = [ev(1, "correction", "2026-10-20T10:00:00Z", task=tk(1)),
+            ev(2, "ask_user", "2026-10-20T10:01:00Z", task=tk(1), questions=3),
+            ev(3, "task_snapshot", "2026-10-21T10:00:00Z", task=tk(1)),
+            ev(4, "install", "2026-10-21T11:00:00Z", command="install", ok=True)]  # no task: not a task-day
+    m = metrics_for(rows, min_n=1)
+    assert m["corrections_per_task_day"] == {"value": pytest.approx(1 / 2), "n": 2}
+    assert m["ask_user_per_task_day"] == {"value": pytest.approx(3 / 2), "n": 2}
+
+
+def test_rework_shares_use_the_newest_rules_and_skip_a_cross_version_baseline():
+    old = [ev(800 + i, "correction", "2026-10-21T10:00:00Z", cause="D", cause_rules="r1") for i in range(3)]
+    new = [ev(810 + i, "correction", "2026-10-22T10:00:00Z", cause="E", cause_rules="r2") for i in range(2)]
+    m = metrics_for(old + new, min_n=1)
+    assert m["rework_share:E"] == {"value": pytest.approx(1.0), "n": 2} and m["rework_share:D"]["value"] == 0
+    window, prev = sane(new), sane(old)
+    assert (tw.rules_version(window), tw.rules_version(prev)) == ("r2", "r1")
+    prev_m = {"rework_share:D": {"value": 1.0, "n": 3}, "test_green_rate": {"value": 0.5, "n": 4}}
+    dropped = tw.drop_cross_version_rework(prev_m, "r2", "r1")
+    assert dropped == {"rework_share:D": {"value": None, "n": 0}, "test_green_rate": {"value": 0.5, "n": 4}}
+    assert tw.drop_cross_version_rework(prev_m, "r2", "r2") is prev_m
+    assert tw.drop_cross_version_rework(prev_m, "r2", None) is prev_m

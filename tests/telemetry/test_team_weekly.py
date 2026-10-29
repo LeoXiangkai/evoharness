@@ -424,8 +424,8 @@ def test_numeric_metrics_with_small_min_n():
     assert m["install_failure_rate"]["value"] == pytest.approx(1 / 3) and m["install_failure_rate"]["n"] == 3
     assert m["test_green_rate"]["value"] == pytest.approx(0.5) and m["test_green_rate"]["n"] == 4
     assert m["first_green_index_median"] == {"value": 2.0, "n": 2}
-    # 6 corrections / 3 snapshot rows (task-days)
-    assert m["corrections_per_task_day"]["value"] == pytest.approx(6 / 3)
+    # 6 corrections / 5 active task-days: task 1 on 10-20 and 10-21, task 2 on 10-20 and 10-21, task 3 on 10-20
+    assert m["corrections_per_task_day"]["value"] == pytest.approx(6 / 5) and m["corrections_per_task_day"]["n"] == 5
     assert m["rework_files_per_task"]["value"] == pytest.approx((3 + 1) / 2)
     assert m["commits_after_review_per_task"]["value"] == pytest.approx(2 / 2)
     assert m["card_corrections_ratio:" + CARD]["value"] == pytest.approx(1 / 2)
