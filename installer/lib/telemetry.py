@@ -73,9 +73,9 @@ def _safe_name(spec: str) -> str:
     return f"{scp.group(1)}:..." if scp else spec
 
 
-def _normalize_gateway(value: object, label: str) -> str:
-    """Normalized gateway base URL. Errors never echo the value: a mistyped URL may carry a credential."""
-    bad = UserError(f"{label}: gateway_base_url must be an http(s) URL with a host, "
+def _normalize_gateway(value: object, label: str, field: str = "gateway_base_url") -> str:
+    """Normalized http(s) base URL (gateway_base_url, otel_endpoint). Errors never echo the value: a mistyped URL may carry a credential."""
+    bad = UserError(f"{label}: {field} must be an http(s) URL with a host, "
                     "without userinfo, query or fragment")
     if not isinstance(value, str) or not value.strip() or re.search(r"[\s\x00-\x1f\x7f]", value.strip()):
         raise bad
@@ -94,7 +94,7 @@ def _normalize_gateway(value: object, label: str) -> str:
 
 
 def same_gateway(value: object, url: str) -> bool:
-    """True when value is a string that normalizes to the already-normalized gateway url."""
+    """True when value is a string that normalizes to the already-normalized url (gateway or OTel endpoint)."""
     if not isinstance(value, str):
         return False
     try:
@@ -103,15 +103,24 @@ def same_gateway(value: object, url: str) -> bool:
         return False
 
 
-def gateway_url(team_bytes: bytes | None) -> str | None:
-    """Normalized gateway_base_url of validated team.json bytes; None when absent."""
+def _team_url(team_bytes: bytes | None, field: str) -> str | None:
     if team_bytes is None:
         return None
     try:
-        value = json.loads(team_bytes.decode("utf-8")).get("gateway_base_url")
+        value = json.loads(team_bytes.decode("utf-8")).get(field)
     except (UnicodeError, ValueError, AttributeError):
         return None
     return value if isinstance(value, str) and value else None
+
+
+def gateway_url(team_bytes: bytes | None) -> str | None:
+    """Normalized gateway_base_url of validated team.json bytes; None when absent."""
+    return _team_url(team_bytes, "gateway_base_url")
+
+
+def otel_endpoint(team_bytes: bytes | None) -> str | None:
+    """Normalized otel_endpoint of validated team.json bytes; None when absent."""
+    return _team_url(team_bytes, "otel_endpoint")
 
 
 def validate_team_bytes(data: bytes, label: str = "team config") -> bytes:
@@ -145,6 +154,8 @@ def validate_team_bytes(data: bytes, label: str = "team config") -> bytes:
             raise UserError(f"{label}: branch is not a safe git ref name")
     if "gateway_base_url" in raw:
         raw["gateway_base_url"] = _normalize_gateway(raw["gateway_base_url"], label)
+    if "otel_endpoint" in raw:
+        raw["otel_endpoint"] = _normalize_gateway(raw["otel_endpoint"], label, "otel_endpoint")
     return (json.dumps(raw, ensure_ascii=False, indent=2, sort_keys=True) + "\n").encode("utf-8")
 
 

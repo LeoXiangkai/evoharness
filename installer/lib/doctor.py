@@ -5,6 +5,8 @@ import http.client
 import json
 import math
 import os
+import subprocess
+import sys
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -60,6 +62,7 @@ def run_doctor(home: Path, source: Path | None = None) -> tuple[list[tuple[str, 
     checks.extend(_hud(home, loaded))
     checks.extend(_telemetry(home, source))
     checks.extend(_gateway(home))
+    checks.extend(_team_otel(home))
 
     missing = sum(1 for status, _name, _detail in checks if status == MISSING)
     return checks, 1 if missing else 0
@@ -150,6 +153,75 @@ def _gateway(home: Path) -> list[tuple[str, str, str]]:
         return rows
     rows.append(_usage_row(url, token))
     return rows
+
+
+OTEL_CHECK = "team-otel"
+OTEL_PROBE_TIMEOUT = 5
+HELPER_TIMEOUT = 10
+
+
+def _team_otel(home: Path) -> list[tuple[str, str, str]]:
+    """Read-only: team.json otel_endpoint vs settings, then an empty OTLP logs POST. Never prints the token."""
+    endpoint = telemetry.otel_endpoint(telemetry.existing_team_bytes(home))
+    if not endpoint:
+        return []
+    try:
+        payload = settings.load(home / engine.SETTINGS)
+    except UserError:
+        payload = {}
+    env = payload.get("env") if isinstance(payload.get("env"), dict) else {}
+    drift = [f"env.{name}" if section == "env" else name
+             for section, name, expected in engine.otel_rows(home, endpoint)
+             if not engine.otel_same(name, (env if section == "env" else payload).get(name), expected)]
+    helper = home / engine.OTEL_HELPER_REL
+    if not helper.is_file():
+        drift.append("helper 脚本缺失")
+    rows: list[tuple[str, str, str]] = []
+    if drift:
+        rows.append((WARN, OTEL_CHECK, f"OTel 配置未就绪：{'、'.join(drift)}；重新安装可恢复"))
+    if not helper.is_file():
+        return rows
+    headers = _helper_headers(helper, env)
+    if not any(k.lower() == "authorization" for k in headers):
+        rows.append((WARN, OTEL_CHECK, "未找到 key：请在 ~/.claude/settings.json 的 env 里配置 ANTHROPIC_AUTH_TOKEN（管理员发的个人 key）"))
+        return rows
+    rows.append(_otel_probe_row(endpoint, headers))
+    return rows
+
+
+def _helper_headers(helper: Path, settings_env: dict) -> dict[str, str]:
+    # Claude Code applies settings env over the shell env before running the helper; mirror that,
+    # otherwise a shell ANTHROPIC_AUTH_TOKEN for another backend makes doctor probe with the wrong key
+    child_env = {**os.environ, **{k: v for k, v in settings_env.items() if isinstance(k, str) and isinstance(v, str)}}
+    try:
+        done = subprocess.run([os.path.abspath(sys.executable), str(helper)], capture_output=True,
+                              timeout=HELPER_TIMEOUT, check=False, env=child_env)
+        data = json.loads(done.stdout.decode("utf-8"))
+    except (OSError, subprocess.SubprocessError, UnicodeError, ValueError, RecursionError):
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    return {k: v for k, v in data.items() if isinstance(k, str) and isinstance(v, str) and v.strip()}
+
+
+def _otel_probe_row(endpoint: str, headers: dict[str, str]) -> tuple[str, str, str]:
+    host = _host_of(endpoint)
+    request = urllib.request.Request(endpoint + "/v1/logs", data=b'{"resourceLogs":[]}', method="POST",
+                                     headers={**headers, "Content-Type": "application/json"})
+    try:
+        with urllib.request.build_opener(_NoRedirect).open(request, timeout=OTEL_PROBE_TIMEOUT) as resp:
+            status = resp.status
+            resp.read(USAGE_MAX_BYTES)
+    except urllib.error.HTTPError as exc:
+        status = exc.code
+        exc.close()
+    except (OSError, http.client.HTTPException, ValueError):
+        return (WARN, OTEL_CHECK, f"OTel 采集端不可达：{host}")
+    if status == 200:
+        return (PASS, OTEL_CHECK, f"采集端可用：{host}")
+    if status in (401, 403):
+        return (WARN, OTEL_CHECK, "key 无效或已停用")
+    return (WARN, OTEL_CHECK, f"采集端返回异常（HTTP {status}）")
 
 
 def _usage_row(url: str, token: str) -> tuple[str, str, str]:

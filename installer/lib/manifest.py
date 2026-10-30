@@ -93,6 +93,7 @@ class Manifest:
     hud: dict = field(default_factory=dict)
     framework: dict = field(default_factory=dict)
     gateway: dict = field(default_factory=dict)
+    otel: dict = field(default_factory=dict)
 
     def to_dict(self) -> dict:
         return {
@@ -107,6 +108,7 @@ class Manifest:
             "hud": dict(self.hud),
             "framework": dict(self.framework),
             "gateway": dict(self.gateway),
+            "otel": dict(self.otel),
         }
 
     @classmethod
@@ -149,6 +151,7 @@ class Manifest:
             hud=dict(data.get("hud") or {}) if isinstance(data.get("hud") or {}, dict) else {},
             framework=_framework(data.get("framework")),
             gateway=_gateway(data.get("gateway")),
+            otel=_otel(data.get("otel")),
         )
 
     def save(self, home: Path) -> None:
@@ -174,6 +177,33 @@ def _gateway(raw: object) -> dict:
     out: dict = {"value": raw["value"]}
     if isinstance(raw.get("previous"), str) and raw["previous"]:
         out["previous"] = raw["previous"]
+    if raw.get("created_file") is True:
+        out["created_file"] = True
+    return out
+
+
+def _otel_keys(raw: object) -> dict:
+    out: dict = {}
+    if not isinstance(raw, dict):
+        return out
+    for name, row in raw.items():
+        if not isinstance(name, str) or not isinstance(row, dict) or not isinstance(row.get("value"), str) or not row["value"]:
+            continue
+        item: dict = {"value": row["value"]}
+        if isinstance(row.get("previous"), str) and row["previous"]:
+            item["previous"] = row["previous"]
+        out[name] = item
+    return out
+
+
+def _otel(raw: object) -> dict:
+    """OTel block record: per-key {value, previous?} for settings env and top-level keys, plus created_file."""
+    if not isinstance(raw, dict):
+        return {}
+    env, top = _otel_keys(raw.get("env")), _otel_keys(raw.get("top"))
+    if not env and not top:
+        return {}
+    out: dict = {"env": env, "top": top}
     if raw.get("created_file") is True:
         out["created_file"] = True
     return out
