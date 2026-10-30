@@ -282,7 +282,7 @@ def test_doctor_summary_line_format_is_unchanged(home: Path) -> None:
         r"summary          (MISSING|PASS|SKIPPED|WARN)=\d+( (MISSING|PASS|SKIPPED|WARN)=\d+)*",
         summary[0],
     ), summary[0]
-    assert summary[0] == "summary          PASS=10 SKIPPED=3 WARN=6"
+    assert summary[0] == "summary          PASS=11 SKIPPED=3 WARN=6"
 
     (home / ".claude/skills/grilling").mkdir(parents=True)
     after = run_aicj("doctor", home=home)

@@ -64,7 +64,8 @@ ENVELOPE_REQUIRED = ("schema", "type", "ts", "event_id", "team", "user")
 
 SCHEMA = {
     "install": {
-        "command": ("enum", ("install", "uninstall", "doctor")),
+        "command": ("enum", ("install", "uninstall", "doctor", "upgrade")),
+        "channel": ("enum", ("stable", "beta")), "commit": "token",
         "ok": "bool", "error_kind": "token", "packs": "tokens", "adapters": "tokens",
         "hook_mode": "token", "failed_checks": "tokens", "python": "token",
     },
@@ -739,6 +740,15 @@ def _spool_write(claude_dir: Path, event: dict) -> None:
     _append_lines(_tdir(claude_dir) / "spool" / (event["ts"][:10] + ".jsonl"), [_dumps(event)])
 
 
+def _framework_version(claude_dir: Path) -> str | None:
+    try:
+        data = _read_json(claude_dir / "aicj" / "framework.json")
+        value = data.get("version") if isinstance(data, dict) else None
+        return value if isinstance(value, str) and _TOKEN_RE.fullmatch(value) else None
+    except Exception:
+        return None
+
+
 def emit(claude_dir: Path, type: str, data: dict, *, cwd: str | None = None,
          version: str | None = None, event_id: str | None = None) -> bool:
     """Spool one event. A caller-supplied event_id (hex hash) is kept; otherwise a uuid4 is used."""
@@ -750,6 +760,8 @@ def emit(claude_dir: Path, type: str, data: dict, *, cwd: str | None = None,
         if not ident["user"]:
             return False
         rt = task_key(claude_dir, cwd, team) if cwd else None
+        if not version:
+            version = _framework_version(claude_dir)
         if not (isinstance(event_id, str) and _HASH_RE.fullmatch(event_id)):
             event_id = uuid.uuid4().hex
         event = _build(team, ident, type, data if isinstance(data, dict) else {},

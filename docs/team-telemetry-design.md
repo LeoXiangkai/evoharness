@@ -100,7 +100,7 @@ task_key(claude_dir: Path, cwd: str, team: dict) -> tuple[str, str] | None   # (
 
 | type | 字段 | 采集项 |
 |---|---|---|
-| `install` | `command`(install/uninstall/doctor) `ok` `error_kind` `packs` `adapters` `hook_mode` `failed_checks` `python` | 1 安装健康 |
+| `install` | `command`(install/uninstall/doctor/upgrade) `channel`(stable/beta) `commit` `ok` `error_kind` `packs` `adapters` `hook_mode` `failed_checks` `python` | 1 安装健康 |
 | `project_init` | `ok` `error_kind` | 1 |
 | `hook_gate` | `hook` `event`(deny/ask_dropped) `mode`(warn/block/unknown) `rule_tag` `rule_hash` `tool` | 2 拦截，4 信号 |
 | `bypass` | `kind`(no_verify/hook_mode_override/skip_tests) | 2 |
@@ -161,11 +161,11 @@ SessionStart 钩子只做第 1、2 步的判断，到期才起脱离进程，不
 ## 团队配置 `team.json`
 
 ```json
-{"team_id": "demo", "collect_repo": "<git URL>", "branch": "main", "salt": "<随机串>",
+{"team_id": "demo", "collect_repo": "<git URL>", "branch": "main", "salt": "<随机串>", "channel": "stable",
  "upload_interval_hours": 24, "spool_max_mb": 20, "source": "<配置来源 URL 或路径>"}
 ```
 
-`team_id`、`collect_repo`、`salt` 必填，缺失时安装报错且不写入。可选 `framework_repo` 指向框架镜像（如 Gitee），Windows 安装脚本从它克隆并让自管克隆跟随它。带 `--team-config` 安装时用 `git ls-remote` 只读探测采集仓库，访问不到只告警、安装照常完成；dry-run 不探测。`--team-config` 支持 `http(s)://`、`file://` 和本地路径。配置放在私有仓库时 urllib 拿不到 git 凭据，应先克隆再传本地路径。
+`team_id`、`collect_repo`、`salt` 必填，缺失时安装报错且不写入。可选 `channel`（`stable` / `beta`）是团队默认的框架升级通道，成员可用 `--channel` 覆盖，见 `docs/global-install-design.md §8`。可选 `framework_repo` 指向框架镜像（如 Gitee），Windows 安装脚本从它克隆并让自管克隆跟随它。带 `--team-config` 安装时用 `git ls-remote` 只读探测采集仓库，访问不到只告警、安装照常完成；dry-run 不探测。`--team-config` 支持 `http(s)://`、`file://` 和本地路径。配置放在私有仓库时 urllib 拿不到 git 凭据，应先克隆再传本地路径。
 
 ## doctor 检查项
 

@@ -95,6 +95,9 @@ def validate_team_bytes(data: bytes, label: str = "team config") -> bytes:
     framework = raw.get("framework_repo")
     if framework is not None and (not isinstance(framework, str) or framework.strip().startswith("-")):
         raise UserError(f"{label}: framework_repo must be a string that does not start with '-'")
+    channel = raw.get("channel")
+    if channel is not None and (not isinstance(channel, str) or channel not in ("stable", "beta")):
+        raise UserError(f"{label}: channel must be \"stable\" or \"beta\"")
     branch = raw.get("branch")
     if branch is not None:
         if not isinstance(branch, str) or (branch.strip() and not _safe_ref(branch.strip())):
@@ -168,6 +171,11 @@ def _lib(home: Path, source: Path | None):
     return load_library(*candidates)
 
 
+def _framework_info(home: Path) -> dict:
+    from .release import load_framework
+    return load_framework(home)
+
+
 def emit_install(home: Path, source: Path | None, command: str, ok: bool, *,
                  error_kind: str = "", options=None, failed_checks: list[str] | None = None) -> None:
     try:
@@ -184,6 +192,11 @@ def emit_install(home: Path, source: Path | None, command: str, ok: bool, *,
             data["packs"] = [p for p in options.packs if _TOKEN_RE.fullmatch(str(p))]
             data["adapters"] = [a for a in options.adapters if _TOKEN_RE.fullmatch(str(a))]
             data["hook_mode"] = "block" if options.strict else "warn"
+        framework = _framework_info(home)
+        if framework.get("channel") in ("stable", "beta"):
+            data["channel"] = framework["channel"]
+        if framework.get("commit") and _TOKEN_RE.fullmatch(framework["commit"]):
+            data["commit"] = framework["commit"]
         if failed_checks:
             data["failed_checks"] = [c for c in failed_checks if _TOKEN_RE.fullmatch(str(c))]
         lib.emit(home / ".claude", "install", data)
