@@ -167,6 +167,12 @@ gitee   Gitee
 
 Keep `main` as the default branch on both hosts. Do not add host-specific workflow requirements to the core template unless they have a portable fallback.
 
+## Releasing
+
+1. On `main`, set `VERSION` to the new `X.Y.Z` and commit.
+2. Create an annotated tag on that commit: `git tag -a vX.Y.Z -m "vX.Y.Z"` (the tag name minus `v` must equal `VERSION` in that commit).
+3. Push `main` and the tag to both GitHub and Gitee; the mirror does not sync automatically.
+
 Target project placement rule:
 
 ```text

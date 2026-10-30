@@ -23,7 +23,7 @@ Values are tokens (`[A-Za-z0-9._:+-]{1,64}`), hashes (`[0-9a-f]{8,64}`), ints, b
 
 | type | fields |
 |---|---|
-| install | command (install, uninstall, doctor), ok, error_kind, packs, adapters, hook_mode, failed_checks, python |
+| install | command (install, uninstall, doctor, upgrade), channel (stable, beta), commit, ok, error_kind, packs, adapters, hook_mode, failed_checks, python |
 | project_init | ok, error_kind |
 | hook_gate | hook, event (deny, ask_dropped), mode (warn, block, unknown), rule_tag, rule_hash, tool |
 | bypass | kind (no_verify, hook_mode_override, skip_tests) |

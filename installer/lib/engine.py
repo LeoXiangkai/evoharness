@@ -10,7 +10,7 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import conflict, hud, index, manifest, mdblock, settings, telemetry
+from . import conflict, hud, index, manifest, mdblock, release, settings, telemetry
 from .util import (
     UserError,
     atomic_write,
@@ -662,6 +662,11 @@ def _run_install(
     elif TEAM_REL in previous:
         team_bytes = telemetry.existing_team_bytes(home)
 
+    options.channel, options.channel_override = release.resolve_channel(
+        options.channel_request, old.options.channel_override if old else "", release.team_channel(team_bytes))
+    full_commit = git_commit(source)
+    framework = release.framework_record(source, options.channel, full_commit)
+
     # 2. plan (pure)
     ts = timestamp()
     file_ops, skills = _plan_files(idx.files, home, options, ts, report, previous)
@@ -673,6 +678,8 @@ def _run_install(
     executor_mode = "worker" if any(str(name).strip().casefold() == "executor" for name in options.adapters) else "cc"
     config = json.dumps({"hook_mode": mode, "executor_mode": executor_mode}, ensure_ascii=False, separators=(",", ":")) + "\n"
     generated_ops.append(_plan_generated(config_rel, config.encode("utf-8"), home, options, previous, ts, report))
+    framework_json = json.dumps(framework, ensure_ascii=False, indent=2) + "\n"
+    generated_ops.append(_plan_generated(release.FRAMEWORK_REL, framework_json.encode("utf-8"), home, options, previous, ts, report))
     if team_bytes is not None:
         generated_ops.append(_plan_generated(TEAM_REL, team_bytes, home, options, previous, ts, report))
     if is_windows():
@@ -724,9 +731,10 @@ def _run_install(
     journal = Journal(home, old, enabled=not dry_run)
     journal.meta = manifest.Manifest(
         source_repo=str(source),
-        source_commit=git_commit(source) if not dry_run else "",
+        source_commit=full_commit if not dry_run else "",
         installed_at=iso_now(),
         options=options,
+        framework=framework,
     )
     if not dry_run:
         journal.flush(manifest.IN_PROGRESS)
@@ -1115,5 +1123,7 @@ def run_status(home: Path, source: Path | None) -> Report:
         state = "installed" if target.exists() or target.is_symlink() else "missing"
         report.add(state, entry.path, entry.action)
     report.note(f"installed_at {loaded.installed_at}")
+    for line in release.framework_lines(home, root):
+        report.note(line)
     report.note(f"options {loaded.options.packs} adapters={loaded.options.adapters}")
     return report

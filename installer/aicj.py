@@ -10,7 +10,7 @@ from pathlib import Path
 
 from lib import doctor as doctor_mod
 from lib import telemetry as telemetry_mod
-from lib import engine, index, manifest
+from lib import engine, index, manifest, release
 from lib import selftest as selftest_mod
 from lib.util import UserError, abspath
 from lib import wsl
@@ -49,7 +49,17 @@ def build_parser() -> argparse.ArgumentParser:
     install.add_argument("--no-hud", action="store_true", help="do not install the claude-hud status line")
     install.add_argument("--team-config", default="", metavar="URL|PATH",
                          help="join team telemetry: http(s)/file:// URL or path of a team.json")
+    install.add_argument("--channel", choices=("stable", "beta", "auto"), default="",
+                         help="record the release channel (auto clears the member override); `upgrade` switches code")
     install.add_argument("--dry-run", action="store_true")
+
+    upgrade = sub.add_parser("upgrade", help="move the source checkout to the channel target and reinstall", allow_abbrev=False)
+    _common(upgrade)
+    upgrade.add_argument("--channel", choices=("stable", "beta", "auto"), default="")
+    upgrade.add_argument("--check", action="store_true", help="print current -> target only; change nothing")
+    upgrade.add_argument("--no-install", action="store_true", help="update the checkout but skip the reinstall")
+    upgrade.add_argument("--team-config", default="", metavar="URL|PATH",
+                         help="read the team default channel from this team.json (first run, before team.json is installed)")
 
     uninstall = sub.add_parser("uninstall", help="remove what the manifest records as ours", allow_abbrev=False)
     _common(uninstall)
@@ -137,10 +147,76 @@ def cmd_install(args: argparse.Namespace) -> int:
         enable_hooks=list(args.enable_hook),
         no_hud=args.no_hud,
         team_config=args.team_config,
+        channel_request=args.channel,
     )
     report, _result = engine.run_install(home, source, options, args.dry_run)
     _print_report("install", report, args.dry_run)
     return 0
+
+
+def _install_command(repo: Path, home: Path, old: manifest.Manifest, channel_arg: str) -> list[str]:
+    options = old.options
+    cmd = [sys.executable, str(repo / "installer" / "aicj.py"), "install", "--home", str(home),
+           "--source", str(repo), "--channel", channel_arg]
+    if options.packs:
+        cmd += ["--packs", ",".join(options.packs)]
+    if options.adapters:
+        cmd += ["--adapters", ",".join(options.adapters)]
+    for flag, on in (("--codex", options.codex), ("--codex-hooks", options.codex_hooks), ("--strict", options.strict),
+                     ("--link", options.link), ("--no-hud", options.no_hud)):
+        if on:
+            cmd.append(flag)
+    cmd += ["--on-conflict", options.on_conflict if options.on_conflict in ("skip", "backup") else "skip"]
+    for name in options.enable_hooks:
+        cmd += ["--enable-hook", name]
+    return cmd
+
+
+def cmd_upgrade(args: argparse.Namespace) -> int:
+    home = _home(args)
+    repo = _source(args, REPO_ROOT)
+    if repo is None or not repo.is_dir():
+        raise UserError(f"source root not found: {repo}")
+    old = manifest.load(home)
+    if old is None and not args.check and not args.no_install:
+        raise UserError("not installed (no manifest); run `aicj install` first")
+    team_bytes = telemetry_mod.fetch_team_config(args.team_config) if args.team_config.strip() \
+        else telemetry_mod.existing_team_bytes(home)
+    channel, override = release.resolve_channel(args.channel, old.options.channel_override if old else "",
+                                                release.team_channel(team_bytes))
+    real = not args.check
+    try:
+        release.require_checkout(repo)
+        release.fetch(repo)
+        warnings: list[str] = []
+        target = release.resolve_target(repo, channel, warnings)
+        current_commit = release.local_commit(repo)
+        current_version = release.read_version(repo)
+        downgrade = release.is_downgrade(repo, current_commit, target.commit)
+        for text in warnings:
+            print(f"warning: {text}", file=sys.stderr)
+        before = release.display_version(current_version, channel, release.short_commit(current_commit))
+        after = release.display_version(target.version, channel, release.short_commit(target.commit))
+        print(f"upgrade ({channel}): {before} [{release.short_commit(current_commit)}] -> "
+              f"{after} [{release.short_commit(target.commit)}]" + ("  降级" if downgrade else "")
+              + ("  (无变化)" if current_commit == target.commit else ""))
+        if args.check:
+            return 0
+        release.checkout(repo, target)
+        if args.no_install:
+            return 0
+        if old is None:
+            raise UserError("not installed (no manifest); run `aicj install` first")
+        cmd = _install_command(repo, home, old, override or "auto")
+        if args.team_config.strip():
+            cmd += ["--team-config", args.team_config]  # the reinstall must resolve the same team default
+        result = subprocess.run(cmd)
+        telemetry_mod.emit_install(home, repo, "upgrade", result.returncode == 0)
+        return result.returncode
+    except UserError as exc:
+        if real:
+            telemetry_mod.emit_install(home, repo, "upgrade", False, error_kind="UserError")
+        raise
 
 
 def cmd_uninstall(args: argparse.Namespace) -> int:
@@ -165,6 +241,14 @@ NEXT_STEPS = (
 )
 
 
+def _manifest_source(home: Path) -> Path | None:
+    try:
+        loaded = manifest.load(home)
+    except UserError:
+        return None
+    return Path(loaded.source_repo) if loaded and loaded.source_repo else None
+
+
 def cmd_doctor(args: argparse.Namespace) -> int:
     home = _home(args)
     checks, code = doctor_mod.run_doctor(home, _source(args, None))
@@ -173,6 +257,8 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         print(f"{status:<8} {name}  {detail}")
     counts = Counter(status for status, _name, _detail in checks)
     print("summary          " + " ".join(f"{name}={counts[name]}" for name in sorted(counts)))
+    for line in release.framework_lines(home, _source(args, None) or _manifest_source(home)):
+        print(line)
     telemetry_mod.emit_install(home, _source(args, None), "doctor", code == 0,
                                failed_checks=[name for status, name, _d in checks if status == "MISSING"])
     if code == 0:
@@ -259,6 +345,7 @@ def _maybe_handoff(argv: list[str], args: argparse.Namespace) -> int | None:
 
 COMMANDS = {
     "install": cmd_install,
+    "upgrade": cmd_upgrade,
     "uninstall": cmd_uninstall,
     "status": cmd_status,
     "doctor": cmd_doctor,

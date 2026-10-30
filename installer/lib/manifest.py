@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field
 from pathlib import Path, PurePosixPath, PureWindowsPath
 
+from .release import normalize_channel
 from .util import UserError, iso_now, read_json, write_json
 from .settings import HOOK_PATH_MARK
 
@@ -26,6 +27,9 @@ class Options:
     enable_hooks: list[str] = field(default_factory=list)
     no_hud: bool = False
     team_config: str = ""  # install-time input only; never persisted
+    channel: str = ""  # effective channel recorded by install
+    channel_override: str = ""  # member-chosen channel, empty = follow team.json / stable
+    channel_request: str = ""  # install-time --channel input (stable|beta|auto|""); never persisted
 
 
 @dataclass
@@ -50,6 +54,12 @@ def safe_rel(raw: str, what: str, allow_root: bool = False) -> str:
     if not parts or ".." in parts or "." in parts or parts[0].lower() not in ALLOWED_ROOTS or (len(parts) < 2 and not allow_root):
         raise UserError(f"manifest {what} is outside the managed directories: {text!r}")
     return "/".join((parts[0].lower(), *parts[1:]))
+
+
+def _framework(value: object) -> dict:
+    if not isinstance(value, dict):
+        return {}
+    return {key: str(value.get(key) or "") for key in ("version", "channel", "commit")}
 
 
 def _entry(item) -> Entry:
@@ -81,6 +91,7 @@ class Manifest:
     created_dirs: list[str] = field(default_factory=list)
     state: str = COMPLETE
     hud: dict = field(default_factory=dict)
+    framework: dict = field(default_factory=dict)
 
     def to_dict(self) -> dict:
         return {
@@ -88,11 +99,12 @@ class Manifest:
             "state": self.state,
             "source": {"repo": self.source_repo, "commit": self.source_commit},
             "installed_at": self.installed_at,
-            "options": {k: v for k, v in asdict(self.options).items() if k != "team_config"},
+            "options": {k: v for k, v in asdict(self.options).items() if k not in ("team_config", "channel_request")},
             "entries": [asdict(entry) for entry in self.entries],
             "settings_hooks": list(self.settings_hooks),
             "created_dirs": list(self.created_dirs),
             "hud": dict(self.hud),
+            "framework": dict(self.framework),
         }
 
     @classmethod
@@ -125,12 +137,15 @@ class Manifest:
                 project=str(options.get("project", "")),
                 enable_hooks=[str(x) for x in options.get("enable_hooks", [])],
                 no_hud=bool(options.get("no_hud", False)),
+                channel=normalize_channel(options.get("channel")),
+                channel_override=normalize_channel(options.get("channel_override")),
             ),
             entries=[_entry(item) for item in entries],
             settings_hooks=[_hook(item) for item in hooks],
             created_dirs=[safe_rel(str(x), "created dir", allow_root=True) for x in data.get("created_dirs") or []],
             state=state,
             hud=dict(data.get("hud") or {}) if isinstance(data.get("hud") or {}, dict) else {},
+            framework=_framework(data.get("framework")),
         )
 
     def save(self, home: Path) -> None:

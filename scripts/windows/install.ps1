@@ -15,10 +15,14 @@ param(
     [string]$CpaDir = (Join-Path $env:LOCALAPPDATA "cliproxyapi"),
     [switch]$InstallCpa,
     [string]$Adapters = "",
-    [string]$TeamConfig = ""
+    [string]$TeamConfig = "",
+    [ValidateSet("", "stable", "beta", "auto")]
+    [string]$Channel = ""
 )
 
 $ErrorActionPreference = "Stop"
+# ValidateSet ignores case but the Python CLI does not.
+$Channel = $Channel.ToLowerInvariant()
 
 function Refresh-Path {
     $machine = [Environment]::GetEnvironmentVariable("Path", "Machine")
@@ -237,14 +241,26 @@ try {
             & git -C $RepoDir remote set-url origin $teamRepo
             Assert-ExitCode "切换仓库地址"
         }
-        & git -C $RepoDir pull --ff-only
-        Assert-ExitCode "仓库更新"
+        # A clone made before `upgrade` existed cannot run it yet: one plain fast-forward bootstraps it.
+        $aicjPy = Join-Path $RepoDir "installer\aicj.py"
+        if (-not (Test-Path $aicjPy) -or -not (Select-String -Path $aicjPy -Pattern 'add_parser\("upgrade"' -Quiet)) {
+            & git -C $RepoDir pull --ff-only
+            Assert-ExitCode "仓库更新"
+        }
     } else {
         $parent = Split-Path $RepoDir -Parent
         if (-not (Test-Path $parent)) { New-Item -ItemType Directory -Path $parent -Force | Out-Null }
         & git clone $RepoUrl $RepoDir
         Assert-ExitCode "仓库克隆"
     }
+    $upgradeArgs = @("upgrade", "--no-install", "--source", $RepoDir)
+    if ($HomeDir) { $upgradeArgs += "--home"; $upgradeArgs += $HomeDir }
+    if ($Channel) { $upgradeArgs += "--channel"; $upgradeArgs += $Channel }
+    if (-not [string]::IsNullOrWhiteSpace($TeamConfig)) { $upgradeArgs += "--team-config"; $upgradeArgs += $TeamConfig }
+    # upgrade writes warnings to stderr (for example before the first release tag); only the exit code decides.
+    $previous = $ErrorActionPreference; $ErrorActionPreference = "Continue"
+    try { & py -3 (Join-Path $RepoDir "installer\aicj.py") @upgradeArgs } finally { $ErrorActionPreference = $previous }
+    Assert-ExitCode "仓库升级"
 
     if ($Mode -eq "worker") {
         if ($InstallCpa) {
@@ -292,6 +308,7 @@ try {
         $installArgs = @("install") + $homeArgs
         if ($adapterNames.Count -gt 0) { $installArgs += "--adapters"; $installArgs += (($adapterNames | Select-Object -Unique) -join ",") }
         if ($NoHud) { $installArgs += "--no-hud" }
+        if ($Channel) { $installArgs += "--channel"; $installArgs += $Channel }
         if (-not [string]::IsNullOrWhiteSpace($TeamConfig)) {
             $installArgs += "--team-config"; $installArgs += $TeamConfig
         }

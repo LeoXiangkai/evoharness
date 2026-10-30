@@ -230,7 +230,20 @@ def test_windows_script_passes_team_config_through() -> None:
     text = (REPO / "scripts/windows/install.ps1").read_bytes().decode("utf-8-sig")
     assert "[string]$TeamConfig" in text
     assert '$installArgs += "--team-config"; $installArgs += $TeamConfig' in text
-    assert text.index('"--team-config"') > text.index('$installArgs = @("install")')
+    assert text.rindex('"--team-config"') > text.index('$installArgs = @("install")')
+
+
+def test_windows_script_upgrades_through_aicj_instead_of_pulling() -> None:
+    text = (REPO / "scripts/windows/install.ps1").read_bytes().decode("utf-8-sig")
+    assert '[ValidateSet("", "stable", "beta", "auto")]' in text and "[string]$Channel" in text
+    assert '$upgradeArgs = @("upgrade", "--no-install", "--source", $RepoDir)' in text
+    assert '$upgradeArgs += "--channel"; $upgradeArgs += $Channel' in text
+    assert '$upgradeArgs += "--team-config"; $upgradeArgs += $TeamConfig' in text
+    assert '$installArgs += "--channel"; $installArgs += $Channel' in text
+    # the only remaining pull is the one-off bootstrap for clones that predate `upgrade`
+    assert text.count("pull --ff-only") == 1
+    assert text.index("pull --ff-only") < text.index("$upgradeArgs = @(")
+    assert text.index("$upgradeArgs = @(") < text.index('$installArgs = @("install")')
 
 
 def test_windows_script_follows_team_framework_repo_only_for_managed_clone() -> None:

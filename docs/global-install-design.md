@@ -60,6 +60,7 @@ aicj uninstall [--global | --project <dir>] [--dry-run] [--home <dir>]
 aicj status    [--home <dir>]      只读：逐项列出 已装/未装/与仓库不同，并给出 diff 命令
 aicj doctor    [--home <dir>]      只读：PASS / WARN / MISSING / SKIPPED
 aicj selftest  [--home <dir>] [--source <dir>] [--with-claude]  在临时仓库验证安装效果
+aicj upgrade   [--channel stable|beta|auto] [--check] [--no-install]  按通道检出源仓库并重装，见 §8
 ```
 
 - 只用 Python 3 标准库；不创建虚拟环境。
@@ -164,3 +165,46 @@ CLAUDE.md 标记块：BEGIN、END 各恰好出现一次且顺序正确才是合�
 ## 7. 团队遥测
 
 可选的团队采集（`install --team-config`）契约见 `docs/team-telemetry-design.md`，不属于本文冻结范围。
+
+## 8. 版本号与升级通道
+
+### 8.1 版本号
+
+- 仓库根 `VERSION` 是唯一版本源，内容为一行 SemVer `X.Y.Z`（起始 `0.9.0`），Python 与 PowerShell 都直接读该文件。
+- 发版 = 在 `main` 上把 `VERSION` 改成新版本并提交，再对该提交打附注 tag `vX.Y.Z`；tag 与 `main` 同时推到 GitHub 与 Gitee 镜像（镜像不自动同步）。tag 指向的提交里 `VERSION` 必须等于 tag 去掉 `v` 的部分。
+- 不改 manifest `version`（那是清单格式版本，改了会让已安装成员载入失败）。
+
+### 8.2 通道
+
+| 通道 | 源仓库检出 | 显示版本 |
+|---|---|---|
+| `stable`（默认） | `origin` 上匹配 `^v\d+\.\d+\.\d+$` 的最高 tag，detached 检出 | `X.Y.Z` |
+| `beta` | `main` 分支，`pull --ff-only` 跟 `origin/main` | `X.Y.Z+<短提交>` |
+
+通道取值优先级：命令行 `--channel stable|beta` > manifest 里记录的成员覆盖 > `team.json` 的 `channel` > `stable`。`--channel auto` 清除成员覆盖，回到团队默认。`team.json` 新增可选字段 `channel`（`stable` / `beta`），旧安装器忽略未知字段，不破坏兼容。
+
+还没有任何 `vX.Y.Z` tag 时，`stable` 告警并停在当前提交，不报错（首次发版前的过渡）。
+
+### 8.3 安装记录
+
+- `install` 也接受 `--channel stable|beta|auto`：只决定记录的通道与覆盖，不检出源仓库；切换代码由 `upgrade` 负责。
+- manifest `options` 新增 `channel`、`channel_override`（成员显式指定的通道或空串）；manifest 顶层新增 `framework`：`{"version","channel","commit"}`。载入旧 manifest 时缺字段按空值处理。
+- 安装器生成 `~/.claude/aicj/framework.json`（同 `framework` 内容），登记进 manifest，卸载删除；复制模式没有 git 也能读到已装版本。
+- `status` / `doctor` 显示已装版本、通道、提交；源仓库 `VERSION` 或提交与已装记录不同时提示重新 `install` 或 `upgrade`。两者保持只读、不联网。
+
+### 8.4 `aicj upgrade`
+
+```
+aicj upgrade [--channel stable|beta|auto] [--check] [--no-install] [--team-config <URL|PATH>] [--home <dir>] [--source <dir>]
+```
+
+1. 源仓库必须是 git 检出且工作区干净；`HEAD` 只能在 `main` 或 detached（含 tag），否则退出 2 并说明原因——不替开发者切走自己的分支。
+2. `git fetch --tags origin`，按 §8.2 解析目标提交；`--check` 只打印 当前 → 目标（版本、提交、是否降级），不改任何东西，退出 0。
+3. 检出目标：stable 为 `git checkout --detach vX.Y.Z`；beta 为 `git checkout main && git pull --ff-only`。目标早于当前提交时打印“降级”提示后照做（切通道的正常结果）。
+4. 未带 `--no-install` 时，用新检出的 `installer/aicj.py` 以子进程重跑 `install`，沿用 manifest 记录的 options 和已有 `team.json`，并传入本次解析出的通道；子进程退出码即 upgrade 退出码。没有既有 manifest 时退出 2，提示先 `install`。
+5. `--team-config` 只用于读取团队默认通道（首次安装前 `team.json` 尚未写入时，供 Windows 脚本使用）。
+
+### 8.5 Windows 脚本与遥测
+
+- `install.ps1` 新增 `-Channel stable|beta|auto`（默认空 = 按 §8.2 优先级）。克隆或已有仓库时不再直接 `pull --ff-only`，改为调用 `aicj.py upgrade --no-install`（带 `-Channel`、`-TeamConfig`），再照旧执行 `install`。仍只有自管克隆跟随团队镜像。
+- 遥测：`emit` 未传 `version` 时取 `aicj/framework.json` 的版本填入信封 `version`；`install` 事件新增 `channel`（enum）、`commit`（token，短提交），`command` 枚举新增 `upgrade`。
