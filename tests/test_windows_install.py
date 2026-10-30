@@ -252,3 +252,15 @@ def test_windows_script_follows_team_framework_repo_only_for_managed_clone() -> 
     assert 'if ($PSBoundParameters.ContainsKey("RepoUrl")) { "" } else { Get-TeamFrameworkRepo $TeamConfig }' in text
     assert "if ($teamRepo -and $managedClone) {" in text
     assert text.index("$managedClone = $true") < text.index("if ($teamRepo -and $managedClone)")
+
+
+def test_windows_script_passes_on_conflict_only_when_given() -> None:
+    text = (REPO / "scripts/windows/install.ps1").read_bytes().decode("utf-8-sig")
+    assert '[ValidateSet("", "skip", "backup")]' in text and "[string]$OnConflict" in text
+    line = '        if ($OnConflict) { $installArgs += "--on-conflict"; $installArgs += $OnConflict }'
+    assert text.count(line) == 1
+    assert text.index('$installArgs = @("install")') < text.index(line) < text.index("& py -3 installer/aicj.py @installArgs")
+    # upgrade and selftest do not receive it, and nothing else emits the flag
+    assert text.count('"--on-conflict"') == 1
+    # the choices must match the Python CLI
+    assert 'install.add_argument("--on-conflict", choices=("skip", "backup")' in (REPO / "installer/aicj.py").read_text(encoding="utf-8")

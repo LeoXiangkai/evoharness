@@ -20,7 +20,7 @@ Optional: `gateway_base_url`: the team AI gateway address, e.g. `https://ai-gate
 
 Optional: `otel_endpoint`: the OTLP/HTTP collector address, e.g. `http://127.0.0.1:4318` (same format rules as `gateway_base_url`). `aicj install --team-config` then writes one block into `~/.claude/settings.json`: the 8 `env` keys `CLAUDE_CODE_ENABLE_TELEMETRY` and `OTEL_*` (including `OTEL_EXPORTER_OTLP_ENDPOINT`), plus top-level `otelHeadersHelper`, which runs the installed `hooks/aicj/aicj_otel_headers.py` to send the member's `ANTHROPIC_AUTH_TOKEN` (or `ANTHROPIC_API_KEY`) as the `Authorization` bearer header. The block is all-or-nothing: if any of these keys already holds a different value, install skips the whole block; `--on-conflict backup` overwrites and records each old value in the manifest `otel` record. Uninstall restores or removes each key only if it is unchanged since install. `aicj doctor` shows a `team-otel` row (config drift, then an empty `/v1/logs` probe).
 
-Members join with `aicj install --team-config <URL|file://|path>` (Windows: `install.ps1 -TeamConfig`). Without the flag nothing is collected, no hook is registered, and neither team.json nor `aicj/telemetry/` is created (hook code is installed but dormant).
+Members join with `aicj install --team-config <URL|file://|path>` (Windows: `install.ps1 -TeamConfig`; add `-OnConflict backup` to overwrite conflicting settings such as an existing `env.ANTHROPIC_BASE_URL` after backing them up). Without the flag nothing is collected, no hook is registered, and neither team.json nor `aicj/telemetry/` is created (hook code is installed but dormant).
 
 ## 3. Aggregate
 
