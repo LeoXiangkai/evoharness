@@ -23,7 +23,9 @@ def find_block(text: str) -> tuple[int, int] | None:
     if stop < start:
         raise UserError("malformed aicj marker block (end marker before begin marker); fix the file by hand")
     stop += len(END)
-    if text.startswith("\n", stop):
+    if text.startswith("\r\n", stop):
+        stop += 2
+    elif text.startswith("\n", stop):
         stop += 1
     return start, stop
 
@@ -39,10 +41,11 @@ def build_block(reference: str) -> str:
 def append_block(text: str, reference: str) -> str:
     if has_block(text):
         return text
+    eol = "\r\n" if "\r\n" in text else "\n"
     body = text
     if body and not body.endswith("\n"):
-        body += "\n"
-    return body + build_block(reference)
+        body += eol
+    return body + build_block(reference).replace("\n", eol)
 
 
 def remove_exact(text: str, expected: str) -> tuple[str, bool]:

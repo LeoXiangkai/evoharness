@@ -67,7 +67,7 @@ def atomic_write_text(path: Path, text: str) -> None:
 
 def read_json(path: Path):
     try:
-        raw = path.read_text(encoding="utf-8")
+        raw = path.read_text(encoding="utf-8-sig")
     except OSError as exc:
         raise UserError(f"cannot read {path}: {exc}") from exc
     try:

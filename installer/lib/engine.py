@@ -128,7 +128,8 @@ def payload_digest(payload: dict) -> str:
 
 def _read_text(path: Path) -> str:
     try:
-        return path.read_text(encoding="utf-8")
+        with path.open(encoding="utf-8", newline="") as handle:  # keep CRLF as-is
+            return handle.read()
     except UnicodeDecodeError as exc:
         raise UserError(f"{path} is not valid UTF-8 text: {exc}") from exc
     except OSError as exc:
@@ -588,13 +589,13 @@ def _merge_hook_file(
     if not user_digest and existed and action != conflict.CREATED:
         user_digest = original_digest
     if (added or removed) and not dry_run:
-        if existed:
+        # the first backup holds the user's pre-aicj original; keep it across upgrades
+        kept = home / backup_rel if backup_rel else None
+        have_backup = kept is not None and (kept.exists() or kept.is_symlink())
+        if existed and not have_backup:
             new_backup = unique_backup_rel(home, rel, ts)
             shutil.copy2(path, home / new_backup)
             report.add("backup", new_backup)
-            old = home / backup_rel if backup_rel else None
-            if old is not None and (old.exists() or old.is_symlink()):
-                old.unlink()
             backup_rel = new_backup
         entry = manifest.Entry(rel, "settings-hook", action, user_digest, backup_rel)
         journal.set_hooks(rel, rows)
@@ -1172,7 +1173,7 @@ def _remove_md_block(entry: manifest.Entry, home: Path, report: Report, dry_run:
     if span is None:
         report.note(f"{entry.path}: marker block absent")
         return
-    found = text[span[0] : span[1]]
+    found = text[span[0] : span[1]].replace("\r\n", "\n")  # block is stored with LF
     if (expected and found != expected) or (not expected and sha256_text(found) != entry.sha256):
         report.warn(f"{entry.path}: marker block was edited after install, kept")
         return
@@ -1246,8 +1247,6 @@ def _run_uninstall(home: Path, dry_run: bool) -> Report:
         report.note("no manifest; nothing installed")
         return report
 
-    hud.uninstall(home, loaded.hud, report, dry_run=dry_run)
-
     hook_keys: dict[str, list[settings.HookKey]] = {}
     for row in loaded.settings_hooks:
         target = str(row.get("target", SETTINGS))
@@ -1266,6 +1265,8 @@ def _run_uninstall(home: Path, dry_run: bool) -> Report:
     for target in hook_keys:
         if (home / target).exists():
             settings.load(home / target)
+
+    hud.uninstall(home, loaded.hud, report, dry_run=dry_run)
 
     if not dry_run:
         telemetry.uninstall_report(home, None)  # after validation, before the library and team.json are removed

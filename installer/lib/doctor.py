@@ -146,6 +146,7 @@ def _gateway(home: Path) -> list[tuple[str, str, str]]:
     current = env.get(engine.GATEWAY_ENV)
     if not telemetry.same_gateway(current, url):
         rows.append((WARN, GATEWAY_CHECK, f"未接入团队网关：当前 {_host_of(current) or '未设置'}，团队网关 {_host_of(url)}"))
+        return rows
     token = next((t for t in (_text(env.get("ANTHROPIC_AUTH_TOKEN")), _text(env.get("ANTHROPIC_API_KEY")),
                               _text(os.environ.get("ANTHROPIC_AUTH_TOKEN")), _text(os.environ.get("ANTHROPIC_API_KEY"))) if t), "")
     if not token:
