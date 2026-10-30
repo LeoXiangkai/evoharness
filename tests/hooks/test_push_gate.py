@@ -141,6 +141,38 @@ class TestPushGate:
         control = run_hook(std_input('unparsed "git push origin main"', clone))
         assert (control.returncode, control.stderr) == (0, "")
 
+    @pytest.mark.parametrize("command", [
+        "git branch feature/push-notify",
+        "git log origin/push-fix",
+        "git checkout -b push-x",
+        'git commit -m "push"',
+        "git -C /tmp log origin/push-fix",
+    ])
+    def test_fallback_ignores_non_push_git_commands_mentioning_push(self, tmp_path, command):
+        _, clone = make_repo(tmp_path)
+        result = run_hook(std_input(command, clone), env={"AICJ_HOOK_MODE": "block"})
+        assert (result.returncode, result.stderr) == (0, "")
+
+    @pytest.mark.parametrize("command", [
+        "unparsed git push origin main",
+        "unparsed git --no-pager -c a=b push origin main",
+        "unparsed /usr/bin/git -C /tmp push origin main",
+        "unparsed (git push origin main)",
+        "unparsed $(git push origin main)",
+        "unparsed git.exe push origin main",
+    ])
+    def test_fallback_still_denies_unparsed_push_in_block_mode(self, tmp_path, command):
+        _, clone = make_repo(tmp_path)
+        result = run_hook(std_input(command, clone), env={"AICJ_HOOK_MODE": "block"})
+        assert result.returncode == 2
+        assert "无法解析 git push 命令" in result.stderr
+
+    def test_new_branch_at_commit_already_on_remote_is_allowed(self, tmp_path):
+        _, clone = make_repo(tmp_path)
+        subprocess.run(["git", "-C", str(clone), "branch", "newbranch"], check=True, capture_output=True)
+        result = run_hook(std_input("git push -u origin newbranch", clone), env={"AICJ_HOOK_MODE": "block"})
+        assert (result.returncode, result.stderr) == (0, "")
+
     def test_new_branch_risky_push_is_blocked(self, tmp_path):
         _, clone = make_repo(tmp_path)
         subprocess.run(["git", "-C", str(clone), "switch", "-c", "feat"], check=True, capture_output=True)

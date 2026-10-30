@@ -512,6 +512,26 @@ def _remove_quoted(text: str) -> str:
     return "".join(out)
 
 
+def _fallback_has_git_push(text: str) -> bool:
+    """True when some shell segment has a git token whose subcommand is exactly `push`.
+
+    `text` must already have quoted content removed. Git global options are skipped,
+    so `git branch feature/push-x` or `git log origin/push-fix` do not match.
+    """
+    for seg in re.split(r"[;&|\n]", text):
+        words = [w.strip("$({`)}") for w in seg.split()]  # `(git push)`, `$(git push)`
+        for i, word in enumerate(words):
+            name = os.path.basename(word).lower()
+            if name.removesuffix(".exe") not in ("git", "git-safe"):
+                continue
+            j = i + 1
+            while j < len(words) and words[j].startswith("-"):
+                j += 2 if words[j] in GIT_GLOBAL_OPTS_WITH_ARG else 1
+            if j < len(words) and words[j] == "push":
+                return True
+    return False
+
+
 def blobs_at_ref(repo: Path, ref: str, files: list[str]) -> dict[str, str | None]:
     result: dict[str, str | None] = {}
     if not files:
@@ -586,6 +606,8 @@ def check_push(repo: Path, ref: str, remote_ref: str | None, raw_input: str, rem
     if remote_ref is None:
         pending = git_text(repo, "rev-list", ref, "--not", f"--remotes={remote}", check=False)
         if not pending:
+            if git_text(repo, "rev-parse", "--verify", "-q", f"{ref}^{{commit}}", check=False):
+                return True, ""
             return False, f"[push-review-gate] 无法计算 {ref} 的待推送提交范围"
         oldest = pending.splitlines()[-1]
         base = git_text(repo, "rev-parse", f"{oldest}^", check=False)
@@ -684,7 +706,7 @@ def main() -> int:
             return code
         if not pushes:
             fallback_text = _remove_quoted(command)
-            if re.search(r"\bgit\b[^;&|\n]*\bpush\b", fallback_text) and not re.search(r"(?:--dry-run|\s-n(?:\s|$))", fallback_text):
+            if _fallback_has_git_push(fallback_text) and not re.search(r"(?:--dry-run|\s-n(?:\s|$))", fallback_text):
                 return deny_or_warn("[push-review-gate] 无法解析 git push 命令")
             return 0
         for repo, remote, refspecs in pushes:
