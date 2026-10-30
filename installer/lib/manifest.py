@@ -81,6 +81,7 @@ class Manifest:
     created_dirs: list[str] = field(default_factory=list)
     state: str = COMPLETE
     hud: dict = field(default_factory=dict)
+    gateway: dict = field(default_factory=dict)
 
     def to_dict(self) -> dict:
         return {
@@ -93,6 +94,7 @@ class Manifest:
             "settings_hooks": list(self.settings_hooks),
             "created_dirs": list(self.created_dirs),
             "hud": dict(self.hud),
+            "gateway": dict(self.gateway),
         }
 
     @classmethod
@@ -131,6 +133,7 @@ class Manifest:
             created_dirs=[safe_rel(str(x), "created dir", allow_root=True) for x in data.get("created_dirs") or []],
             state=state,
             hud=dict(data.get("hud") or {}) if isinstance(data.get("hud") or {}, dict) else {},
+            gateway=_gateway(data.get("gateway")),
         )
 
     def save(self, home: Path) -> None:
@@ -147,6 +150,18 @@ def load(home: Path) -> Manifest | None:
 
 def remove(home: Path) -> None:
     (home / REL_PATH).unlink(missing_ok=True)
+
+
+def _gateway(raw: object) -> dict:
+    """ANTHROPIC_BASE_URL record: value we wrote, the user's earlier value (if any), whether we created settings.json."""
+    if not isinstance(raw, dict) or not isinstance(raw.get("value"), str) or not raw["value"]:
+        return {}
+    out: dict = {"value": raw["value"]}
+    if isinstance(raw.get("previous"), str) and raw["previous"]:
+        out["previous"] = raw["previous"]
+    if raw.get("created_file") is True:
+        out["created_file"] = True
+    return out
 
 
 def _hook(item: object) -> dict:

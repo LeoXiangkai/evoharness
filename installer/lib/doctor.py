@@ -1,8 +1,14 @@
 from __future__ import annotations
 
 import datetime as dt
+import http.client
+import json
+import math
 import os
+import urllib.error
+import urllib.request
 from pathlib import Path
+from urllib.parse import urlparse
 
 from . import engine, hud, index, manifest, mdblock, settings, telemetry
 from .util import UserError, is_windows
@@ -53,6 +59,7 @@ def run_doctor(home: Path, source: Path | None = None) -> tuple[list[tuple[str, 
     checks.extend(_third_party(home))
     checks.extend(_hud(home, loaded))
     checks.extend(_telemetry(home, source))
+    checks.extend(_gateway(home))
 
     missing = sum(1 for status, _name, _detail in checks if status == MISSING)
     return checks, 1 if missing else 0
@@ -96,6 +103,128 @@ def _telemetry(home: Path, source: Path | None) -> list[tuple[str, str, str]]:
         detail += f"；{stale}"
     rows.append((WARN if (last_error or stale) else PASS, "telemetry-report", detail))
     return rows
+
+
+GATEWAY_CHECK = "team-gateway"
+USAGE_TIMEOUT = 5
+USAGE_MAX_BYTES = 256 * 1024
+_TIERS = (("daily", "今日"), ("weekly", "本周"), ("monthly", "本月"))
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """Never follow redirects: the Authorization header must only reach the configured gateway."""
+
+    def redirect_request(self, *_args, **_kwargs):
+        return None
+
+
+def _host_of(value: object) -> str:
+    try:
+        return urlparse(value).netloc.rpartition("@")[2] if isinstance(value, str) else ""
+    except ValueError:
+        return ""
+
+
+def _text(value: object) -> str:
+    return value.strip() if isinstance(value, str) else ""
+
+
+def _gateway(home: Path) -> list[tuple[str, str, str]]:
+    """Read-only: team.json gateway_base_url vs settings env, plus the member's quota. Never prints the token."""
+    url = telemetry.gateway_url(telemetry.existing_team_bytes(home))
+    if not url:
+        return []
+    rows: list[tuple[str, str, str]] = []
+    try:
+        payload = settings.load(home / engine.SETTINGS)
+    except UserError:
+        payload = {}
+    env = payload.get("env") if isinstance(payload.get("env"), dict) else {}
+    current = env.get(engine.GATEWAY_ENV)
+    if not telemetry.same_gateway(current, url):
+        rows.append((WARN, GATEWAY_CHECK, f"未接入团队网关：当前 {_host_of(current) or '未设置'}，团队网关 {_host_of(url)}"))
+    token = next((t for t in (_text(env.get("ANTHROPIC_AUTH_TOKEN")), _text(env.get("ANTHROPIC_API_KEY")),
+                              _text(os.environ.get("ANTHROPIC_AUTH_TOKEN")), _text(os.environ.get("ANTHROPIC_API_KEY"))) if t), "")
+    if not token:
+        rows.append((WARN, GATEWAY_CHECK, "未找到 key：请在 ~/.claude/settings.json 的 env 里配置 ANTHROPIC_AUTH_TOKEN（管理员发的个人 key）"))
+        return rows
+    rows.append(_usage_row(url, token))
+    return rows
+
+
+def _usage_row(url: str, token: str) -> tuple[str, str, str]:
+    host = _host_of(url)
+    request = urllib.request.Request(url + "/v1/usage", headers={"Authorization": f"Bearer {token}", "Accept": "application/json"})
+    status, body = 0, b""
+    try:
+        with urllib.request.build_opener(_NoRedirect).open(request, timeout=USAGE_TIMEOUT) as resp:
+            status, body = resp.status, resp.read(USAGE_MAX_BYTES)
+    except urllib.error.HTTPError as exc:
+        status = exc.code
+        try:
+            body = exc.read(USAGE_MAX_BYTES)
+        except (OSError, http.client.HTTPException):
+            body = b""
+        finally:
+            exc.close()
+    except (OSError, http.client.HTTPException, ValueError):  # URLError, timeout and refused connections are OSError
+        return (WARN, GATEWAY_CHECK, f"网关不可达：{host}")
+    try:
+        data = json.loads(body.decode("utf-8")) if body else None
+    except (UnicodeError, ValueError, RecursionError):
+        data = None
+    if status in (401, 403) or (status == 200 and _invalid_key(data)):
+        return (WARN, GATEWAY_CHECK, "key 无效或已停用")
+    if status != 200:
+        return (WARN, GATEWAY_CHECK, f"无法解析额度（HTTP {status}）")
+    return _quota_row(data)
+
+
+def _invalid_key(data: object) -> bool:
+    if not isinstance(data, dict):
+        return False
+    if data.get("isValid") is False:
+        return True
+    candidates = [data.get(k) for k in ("code", "error", "error_code", "type")]
+    if isinstance(data.get("error"), dict):
+        candidates += [data["error"].get(k) for k in ("code", "type")]
+    return any(isinstance(c, str) and "INVALID" in c.upper() for c in candidates)
+
+
+def _num(value: object) -> float | None:
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        return None
+    try:
+        number = float(value)
+    except OverflowError:
+        return None
+    return number if math.isfinite(number) else None
+
+
+def _quota_row(data: object) -> tuple[str, str, str]:
+    unreadable = (WARN, GATEWAY_CHECK, "无法解析额度")
+    sub = data.get("subscription") if isinstance(data, dict) else None
+    if not isinstance(sub, dict):
+        return unreadable
+    parts: list[str] = []
+    used_up: list[str] = []
+    for key, label in _TIERS:
+        limit = sub.get(f"{key}_limit_usd")
+        if limit is None:
+            continue
+        limit_n, usage_n = _num(limit), _num(sub.get(f"{key}_usage_usd"))
+        if limit_n is None or usage_n is None:
+            return unreadable
+        parts.append(f"{label} ${usage_n:.2f}/${limit_n:.2f}")
+        if usage_n >= limit_n:
+            used_up.append(label)
+    remaining = _num(data.get("remaining"))
+    if remaining == 0 and not used_up:
+        used_up.append("剩余额度")
+    amounts = "，".join(parts) or "未设额度上限"
+    if used_up:
+        return (WARN, GATEWAY_CHECK, f"额度已用完（{'/'.join(used_up)}）：{amounts}")
+    return (PASS, GATEWAY_CHECK, amounts)
 
 
 def _utc(text: object) -> dt.datetime | None:

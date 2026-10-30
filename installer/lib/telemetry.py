@@ -73,6 +73,47 @@ def _safe_name(spec: str) -> str:
     return f"{scp.group(1)}:..." if scp else spec
 
 
+def _normalize_gateway(value: object, label: str) -> str:
+    """Normalized gateway base URL. Errors never echo the value: a mistyped URL may carry a credential."""
+    bad = UserError(f"{label}: gateway_base_url must be an http(s) URL with a host, "
+                    "without userinfo, query or fragment")
+    if not isinstance(value, str) or not value.strip() or re.search(r"[\s\x00-\x1f\x7f]", value.strip()):
+        raise bad
+    text = value.strip()
+    if "?" in text or "#" in text or ";" in text:
+        raise bad
+    try:
+        parsed = urlparse(text)
+        host = parsed.hostname
+        parsed.port  # noqa: B018 - raises ValueError on a malformed port
+    except ValueError as exc:
+        raise bad from None
+    if parsed.scheme.lower() not in ("http", "https") or not host or "@" in parsed.netloc or parsed.params:
+        raise bad
+    return f"{parsed.scheme.lower()}://{parsed.netloc.lower()}{parsed.path.rstrip('/')}"
+
+
+def same_gateway(value: object, url: str) -> bool:
+    """True when value is a string that normalizes to the already-normalized gateway url."""
+    if not isinstance(value, str):
+        return False
+    try:
+        return _normalize_gateway(value, "gateway") == url
+    except UserError:
+        return False
+
+
+def gateway_url(team_bytes: bytes | None) -> str | None:
+    """Normalized gateway_base_url of validated team.json bytes; None when absent."""
+    if team_bytes is None:
+        return None
+    try:
+        value = json.loads(team_bytes.decode("utf-8")).get("gateway_base_url")
+    except (UnicodeError, ValueError, AttributeError):
+        return None
+    return value if isinstance(value, str) and value else None
+
+
 def validate_team_bytes(data: bytes, label: str = "team config") -> bytes:
     """Return normalized bytes (utf-8 JSON + newline) or raise UserError."""
     if len(data) > MAX_BYTES:
@@ -99,6 +140,8 @@ def validate_team_bytes(data: bytes, label: str = "team config") -> bytes:
     if branch is not None:
         if not isinstance(branch, str) or (branch.strip() and not _safe_ref(branch.strip())):
             raise UserError(f"{label}: branch is not a safe git ref name")
+    if "gateway_base_url" in raw:
+        raw["gateway_base_url"] = _normalize_gateway(raw["gateway_base_url"], label)
     return (json.dumps(raw, ensure_ascii=False, indent=2, sort_keys=True) + "\n").encode("utf-8")
 
 
