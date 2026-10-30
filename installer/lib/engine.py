@@ -36,6 +36,18 @@ UPDATED = "updated"
 SKILL_DIR = "skill-dir"
 HUD_FILE = "hud-file"
 GATEWAY_ENV = "ANTHROPIC_BASE_URL"
+OTEL_ENDPOINT_ENV = "OTEL_EXPORTER_OTLP_ENDPOINT"
+OTEL_HELPER_KEY = "otelHeadersHelper"
+OTEL_HELPER_REL = ".claude/hooks/aicj/aicj_otel_headers.py"
+OTEL_FIXED_ENV = (
+    ("CLAUDE_CODE_ENABLE_TELEMETRY", "1"),
+    ("OTEL_LOGS_EXPORTER", "otlp"),
+    ("OTEL_METRICS_EXPORTER", "otlp"),
+    ("OTEL_EXPORTER_OTLP_PROTOCOL", "http/protobuf"),
+    ("OTEL_LOG_USER_PROMPTS", "1"),
+    ("OTEL_LOG_ASSISTANT_RESPONSES", "1"),
+    ("OTEL_LOG_TOOL_DETAILS", "1"),
+)
 # a hook may only be registered when its script is actually in place
 HOOK_READY_ACTIONS = (conflict.CREATED, conflict.REPLACED, conflict.ADOPTED, conflict.ADOPTED_SYMLINK)
 
@@ -162,6 +174,10 @@ class Journal:
 
     def set_gateway(self, record: dict) -> None:
         self.meta.gateway = record
+        self.flush(manifest.IN_PROGRESS)
+
+    def set_otel(self, record: dict) -> None:
+        self.meta.otel = record
         self.flush(manifest.IN_PROGRESS)
 
     def flush(self, state: str, entries: list[manifest.Entry] | None = None) -> None:
@@ -667,7 +683,8 @@ def _run_install(
     elif TEAM_REL in previous:
         team_bytes = telemetry.existing_team_bytes(home)
     gateway = telemetry.gateway_url(team_bytes)
-    if gateway:
+    otel = telemetry.otel_endpoint(team_bytes)
+    if gateway or otel:
         _env_of(payloads[SETTINGS])  # malformed env aborts before anything is written
 
     options.channel, options.channel_override = release.resolve_channel(
@@ -744,6 +761,7 @@ def _run_install(
         options=options,
         framework=framework,
         gateway=dict(old.gateway) if old else {},
+        otel=dict(old.otel) if old else {},
     )
     if not dry_run:
         journal.flush(manifest.IN_PROGRESS)
@@ -768,6 +786,10 @@ def _run_install(
     md_entry = _apply_md_block(home, claude_text, block_span, dry_run, report, previous.get(CLAUDE_MD), journal)
 
     gateway_record = _apply_gateway(home, gateway, old.gateway if old else {}, options, dry_run, report, journal)
+
+    helper_entry = planned.get(OTEL_HELPER_REL)
+    helper_ready = helper_entry is not None and helper_entry.action in HOOK_READY_ACTIONS
+    otel_record = _apply_otel(home, otel, helper_ready, old.otel if old else {}, options, dry_run, report, journal)
 
     hud_before = hud.runtime_artifacts(home) if not dry_run else {}
     hud_record = hud.install(home, report, dry_run=dry_run, disabled=options.no_hud, previous=old.hud if old else None)
@@ -801,6 +823,7 @@ def _run_install(
     result.created_dirs = list(journal.created_dirs)
     result.hud = hud_record
     result.gateway = gateway_record
+    result.otel = otel_record
     if not dry_run:
         # hook files dropped from this run (nothing wanted, nothing stale) must not leave rows behind
         for rel in list(journal.hooks):
@@ -897,6 +920,132 @@ def _remove_gateway(home: Path, record: dict, report: Report, dry_run: bool) -> 
     else:
         env.pop(GATEWAY_ENV)
         report.add("removed", SETTINGS, f"env.{GATEWAY_ENV}")
+    if env:
+        payload["env"] = env
+    else:
+        payload.pop("env", None)
+    if dry_run:
+        return
+    if not payload and record.get("created_file"):
+        path.unlink()
+    else:
+        settings.save(path, payload)
+
+
+def otel_helper_command(home: Path) -> str:
+    """Same interpreter/script path construction as hook_command(), each part double-quoted."""
+    return f'"{os.path.abspath(sys.executable)}" "{home / OTEL_HELPER_REL}"'
+
+
+def otel_same(name: str, current: object, expected: str) -> bool:
+    if not isinstance(current, str):
+        return False
+    if name == OTEL_ENDPOINT_ENV:
+        return telemetry.same_gateway(current, expected)
+    return current.strip() == expected
+
+
+def otel_rows(home: Path, endpoint: str) -> list[tuple[str, str, str]]:
+    """(section, key, expected value) for the whole OTel block."""
+    return [*(("env", name, value) for name, value in OTEL_FIXED_ENV),
+            ("env", OTEL_ENDPOINT_ENV, endpoint),
+            ("top", OTEL_HELPER_KEY, otel_helper_command(home))]
+
+
+def _apply_otel(
+    home: Path,
+    endpoint: str | None,
+    helper_ready: bool,
+    record: dict,
+    options: manifest.Options,
+    dry_run: bool,
+    report: Report,
+    journal: Journal,
+) -> dict:
+    """All-or-nothing OTel block in settings.json (env keys + otelHeadersHelper); never touches any key/token."""
+    if not endpoint:
+        return dict(record)
+    if not helper_ready:
+        report.warn(f"{SETTINGS}: OTel header helper not installed, OTel block not written")
+        return dict(record)
+    path = home / SETTINGS
+    existed = path.exists()
+    payload = settings.load(path)
+    env = _env_of(payload)
+    new: dict = {"env": {}, "top": {}}
+    writes: list[tuple[str, str, str]] = []
+    conflict_key = ""
+    for section, name, expected in otel_rows(home, endpoint):
+        current = (env if section == "env" else payload).get(name)
+        row = (record.get(section) or {}).get(name)
+        unset = current is None or (isinstance(current, str) and not current.strip())
+        ours_before = bool(row) and otel_same(name, current, row["value"])
+        noop = otel_same(name, current, expected)
+        item: dict = {"value": expected}
+        if row and row.get("previous"):
+            item["previous"] = row["previous"]
+        if noop and not ours_before:
+            if isinstance(current, str) and current:
+                item["previous"] = current  # the user's own value: uninstall must leave it in place
+        elif not noop and not ours_before:
+            if unset:
+                item.pop("previous", None)
+            elif options.on_conflict == "backup" and isinstance(current, str):
+                item["previous"] = current
+            else:  # a non-string value cannot be recorded for restore, so backup does not cover it either
+                conflict_key = conflict_key or (f"env.{name}" if section == "env" else name)
+        new[section][name] = item
+        if not noop:
+            writes.append((section, name, expected))
+    if conflict_key:
+        report.warn(f"{SETTINGS}: {conflict_key} differs, OTel block skipped; rerun with --on-conflict backup")
+        return dict(record)
+    if record.get("created_file") or not existed:
+        new["created_file"] = True
+    if writes:
+        report.add("env", SETTINGS, f"OTel block -> {endpoint}")
+    else:
+        report.add(conflict.ADOPTED, SETTINGS, "OTel block")
+    if not dry_run:
+        journal.set_otel(new)  # recorded before the write so an interrupted run stays uninstallable
+        if writes:
+            env = dict(env)
+            for section, name, expected in writes:
+                if section == "env":
+                    env[name] = expected
+                else:
+                    payload[name] = expected
+            payload["env"] = env
+            journal.ensure_dir(path.parent)
+            settings.save(path, payload)
+            settings.load(path)
+    return new
+
+
+def _remove_otel(home: Path, record: dict, report: Report, dry_run: bool) -> None:
+    if not record or not (record.get("env") or record.get("top")):
+        return
+    path = home / SETTINGS
+    if not path.exists():
+        report.note(f"{SETTINGS}: already gone")
+        return
+    payload = settings.load(path)
+    env = dict(_env_of(payload))
+    for section, target in (("env", env), ("top", payload)):
+        for name, row in (record.get(section) or {}).items():
+            current = target.get(name)
+            if current is None:
+                continue
+            if not isinstance(row.get("value"), str) or not otel_same(name, current, row["value"]):
+                report.note(f"{SETTINGS}: {name} changed since install, kept")
+                continue
+            previous = row.get("previous")
+            if isinstance(previous, str) and previous:
+                target[name] = previous
+                report.add("restored", SETTINGS, name)
+            else:
+                target.pop(name)
+                report.add("removed", SETTINGS, name)
     if env:
         payload["env"] = env
     else:
@@ -1123,6 +1272,7 @@ def _run_uninstall(home: Path, dry_run: bool) -> Report:
         telemetry.remove_collect_artifacts(home)
 
     # before hook unmerge: the original-settings digest check expects our env change already gone
+    _remove_otel(home, loaded.otel, report, dry_run)  # reverse of install order so a created settings.json empties last
     _remove_gateway(home, loaded.gateway, report, dry_run)
 
     gone: set[Path] = set()
@@ -1155,6 +1305,7 @@ def _run_uninstall(home: Path, dry_run: bool) -> Report:
             loaded.entries = retained
             loaded.settings_hooks = []
             loaded.gateway = {}
+            loaded.otel = {}
             loaded.state = manifest.COMPLETE
             loaded.save(home)
         return report

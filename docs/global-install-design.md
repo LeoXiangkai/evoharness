@@ -100,7 +100,7 @@ aicj upgrade   [--channel stable|beta|auto] [--check] [--no-install]  按通道�
 1. 写前备份为 `settings.json.aicj-bak-<ts>`（每次安装最多保留最近 1 份，旧的我方备份随之删除）；文件不存在则从 `{}` 开始。目标是软链时写到软链指向的真实文件并保持其 mode，软链本身保留。
 2. 以 `(事件, matcher, command, args)` 为唯一键：已存在跳过，不存在则追加到对应事件列表末尾；不改已有条目顺序与内容。
 3. 我方钩子使用 `{"type":"command","command":"<绝对解释器>","args":["<绝对脚本>"]}` exec 形式，脚本路径经规范化后必须位于 `hooks/aicj/` 下；旧 shell 形式在升级时替换，用户钩子不动。仅当脚本条目为 created/replaced/adopted 时才注册。`SessionStart` / `Stop` / `UserPromptSubmit` / `SessionEnd` / `PreCompact` / `Notification` 不写 `matcher` 键。
-4. 常规合并只触碰 `hooks` 键；`env`、`permissions`、`enabledPlugins` 等一律不读不写（`permissions` 不随安装带出），唯一例外：team.json 带 `gateway_base_url` 时只写 `env.ANTHROPIC_BASE_URL`（冲突默认跳过，`--on-conflict backup` 覆盖，旧值记入 manifest 的 `gateway`，卸载仅在值未被改动时移除或恢复；绝不读写任何 key/token）。`statusLine` 仅由 claude-hud 步骤按独立归属规则管理。
+4. 常规合并只触碰 `hooks` 键；`env`、`permissions`、`enabledPlugins` 等一律不读不写（`permissions` 不随安装带出），例外一：team.json 带 `otel_endpoint` 时整块写入 `env.CLAUDE_CODE_ENABLE_TELEMETRY` 与 7 个 `env.OTEL_*` 键，及顶层 `otelHeadersHelper`（任一键已有不同值则整块跳过，`--on-conflict backup` 覆盖并把各键旧值记入 manifest 的 `otel`，卸载逐键仅在值未被改动时移除或恢复）；例外二：team.json 带 `gateway_base_url` 时只写 `env.ANTHROPIC_BASE_URL`（冲突默认跳过，`--on-conflict backup` 覆盖，旧值记入 manifest 的 `gateway`，卸载仅在值未被改动时移除或恢复；绝不读写任何 key/token）。`statusLine` 仅由 claude-hud 步骤按独立归属规则管理。
 5. 写回用临时文件 + 原子 rename，写后重新解析校验。
 6. 卸载按 manifest 中记录的键精确删除；删除后为空的 matcher 组与事件键一并清除。用户预先已有的同 command 条目记为 adopted，不进 manifest、卸载不删。
 7. 卸载后 settings 与用户原件一致时，清理我方创建的备份。

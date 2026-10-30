@@ -170,6 +170,10 @@
         "target": "hooks/aicj/aicj_telemetry.py"
       },
       {
+        "source": "hooks/aicj_otel_headers.py",
+        "target": "hooks/aicj/aicj_otel_headers.py"
+      },
+      {
         "source": "hooks/telemetry-capture.py",
         "target": "hooks/aicj/telemetry-capture.py"
       },
