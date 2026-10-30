@@ -325,6 +325,9 @@ try {
     $displayHome = if ($HomeDir) { $HomeDir } else { $HOME }
     $installDir = Join-Path $displayHome ".claude"
     $meaning = if ($Mode -eq "worker") { "worker：B/C 档先经 CPA 使用外部执行体，失败才降级为子代理。" } else { "cc：B/C 档直接使用 Claude Code 子代理。" }
+    if (-not [string]::IsNullOrWhiteSpace($TeamConfig)) {
+        Write-Host "如果团队配置了网关（gateway_base_url），请在 $installDir\settings.json 的 env 里填写 ANTHROPIC_AUTH_TOKEN（管理员发的个人 key），然后运行 cd `"$RepoDir`"; py -3 installer/aicj.py doctor --home `"$displayHome`" 查看额度。"
+    }
     if ($selftestCode -eq 0) {
         Write-Host "aicj Windows 一键安装与自检完成。安装目录：$installDir；重新自检：cd `"$RepoDir`"; py -3 installer/aicj.py selftest --home `"$displayHome`"。当前模式：$Mode。$meaning"
     } else {

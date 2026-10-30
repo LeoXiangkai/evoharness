@@ -15,6 +15,9 @@ Adding a member: invite their account to the collect repo with write access and 
 ```
 
 Optional: `framework_repo`: git URL of an EvoHarness mirror members can reach (for example on Gitee). `install.ps1 -TeamConfig` clones from it, and switches the origin of its own managed clone (`~\src\evoharness`) to it, unless `-RepoUrl` is given; keep the mirror in sync with every push. `upload_interval_hours`; `spool_max_mb` (default 20): when the local spool exceeds it, the oldest day files are deleted first. Host it at an http(s) URL, or hand members the file.
+
+Optional: `gateway_base_url`: the team AI gateway address, e.g. `https://ai-gateway.example.test` (http or https with a host; no userinfo, query or fragment; a trailing `/` is dropped). Put the address only, never a key. `aicj install --team-config` writes it to `~/.claude/settings.json` as `env.ANTHROPIC_BASE_URL`. If the member already has a different value, install skips it and says so; rerun with `--on-conflict backup` to overwrite (the old value is kept in the manifest and restored on uninstall). Uninstall removes the value only if it is still the one install wrote; an existing value already equal to the team gateway is left in place on uninstall. Each member puts the personal key the admin issued under `env.ANTHROPIC_AUTH_TOKEN` in the same `settings.json`; the installer never reads or writes keys. `aicj doctor` then shows a `team-gateway` row with today's and this month's usage (and this week's when a weekly limit is set), and warns when the gateway is not configured, the key is missing or invalid, the quota is used up, or the gateway is unreachable.
+
 Members join with `aicj install --team-config <URL|file://|path>` (Windows: `install.ps1 -TeamConfig`). Without the flag nothing is collected, no hook is registered, and neither team.json nor `aicj/telemetry/` is created (hook code is installed but dormant).
 
 ## 3. Aggregate

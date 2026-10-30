@@ -35,6 +35,7 @@ OWNED_ACTIONS = (conflict.CREATED, conflict.REPLACED)
 UPDATED = "updated"
 SKILL_DIR = "skill-dir"
 HUD_FILE = "hud-file"
+GATEWAY_ENV = "ANTHROPIC_BASE_URL"
 # a hook may only be registered when its script is actually in place
 HOOK_READY_ACTIONS = (conflict.CREATED, conflict.REPLACED, conflict.ADOPTED, conflict.ADOPTED_SYMLINK)
 
@@ -157,6 +158,10 @@ class Journal:
 
     def set_hooks(self, rel: str, rows: list[dict]) -> None:
         self.hooks[rel] = rows
+        self.flush(manifest.IN_PROGRESS)
+
+    def set_gateway(self, record: dict) -> None:
+        self.meta.gateway = record
         self.flush(manifest.IN_PROGRESS)
 
     def flush(self, state: str, entries: list[manifest.Entry] | None = None) -> None:
@@ -661,6 +666,9 @@ def _run_install(
                 report.warn(warning)
     elif TEAM_REL in previous:
         team_bytes = telemetry.existing_team_bytes(home)
+    gateway = telemetry.gateway_url(team_bytes)
+    if gateway:
+        _env_of(payloads[SETTINGS])  # malformed env aborts before anything is written
 
     options.channel, options.channel_override = release.resolve_channel(
         options.channel_request, old.options.channel_override if old else "", release.team_channel(team_bytes))
@@ -735,6 +743,7 @@ def _run_install(
         installed_at=iso_now(),
         options=options,
         framework=framework,
+        gateway=dict(old.gateway) if old else {},
     )
     if not dry_run:
         journal.flush(manifest.IN_PROGRESS)
@@ -757,6 +766,8 @@ def _run_install(
         )
 
     md_entry = _apply_md_block(home, claude_text, block_span, dry_run, report, previous.get(CLAUDE_MD), journal)
+
+    gateway_record = _apply_gateway(home, gateway, old.gateway if old else {}, options, dry_run, report, journal)
 
     hud_before = hud.runtime_artifacts(home) if not dry_run else {}
     hud_record = hud.install(home, report, dry_run=dry_run, disabled=options.no_hud, previous=old.hud if old else None)
@@ -789,6 +800,7 @@ def _run_install(
     result.settings_hooks = hooks_rows
     result.created_dirs = list(journal.created_dirs)
     result.hud = hud_record
+    result.gateway = gateway_record
     if not dry_run:
         # hook files dropped from this run (nothing wanted, nothing stale) must not leave rows behind
         for rel in list(journal.hooks):
@@ -798,6 +810,103 @@ def _run_install(
         report.add("manifest", manifest.REL_PATH)
         telemetry.emit_install(home, source, "install", True, options=options)
     return report, result
+
+
+def _env_of(payload: dict) -> dict:
+    env = payload.get("env")
+    if env is None:
+        return {}
+    if not isinstance(env, dict):
+        raise UserError(f"{SETTINGS}: env must be a JSON object")
+    return env
+
+
+def _apply_gateway(
+    home: Path,
+    url: str | None,
+    record: dict,
+    options: manifest.Options,
+    dry_run: bool,
+    report: Report,
+    journal: Journal,
+) -> dict:
+    """Write env.ANTHROPIC_BASE_URL from team.json; returns the manifest record (never touches any key/token)."""
+    if not url:
+        return dict(record)
+    path = home / SETTINGS
+    existed = path.exists()
+    payload = settings.load(path)
+    env = _env_of(payload)
+    current = env.get(GATEWAY_ENV)
+    unset = current is None or (isinstance(current, str) and not current.strip())
+    ours_before = bool(record) and telemetry.same_gateway(current, record.get("value", ""))
+    new: dict = {"value": url}
+    if record.get("previous"):
+        new["previous"] = record["previous"]
+    if record.get("created_file") or not existed:
+        new["created_file"] = True
+    noop = telemetry.same_gateway(current, url)
+    if noop and not ours_before:
+        new["previous"] = current  # the user's own value: uninstall must leave it in place
+    elif not noop and not ours_before:
+        if unset:
+            new.pop("previous", None)
+        elif options.on_conflict == "backup":
+            if isinstance(current, str):
+                new["previous"] = current
+            else:
+                new.pop("previous", None)
+        else:
+            report.warn(f"{SETTINGS}: env.{GATEWAY_ENV} differs; rerun with --on-conflict backup")
+            return dict(record)
+    if noop:
+        report.add(conflict.ADOPTED, SETTINGS, f"env.{GATEWAY_ENV}")
+    else:
+        report.add("env", SETTINGS, f"{GATEWAY_ENV} -> {url}")
+    if not dry_run:
+        journal.set_gateway(new)  # recorded before the write so an interrupted run stays uninstallable
+        if not noop:
+            payload["env"] = {**env, GATEWAY_ENV: url}
+            journal.ensure_dir(path.parent)
+            settings.save(path, payload)
+            settings.load(path)
+    return new
+
+
+def _remove_gateway(home: Path, record: dict, report: Report, dry_run: bool) -> None:
+    value = record.get("value") if record else None
+    if not isinstance(value, str) or not value:
+        return
+    path = home / SETTINGS
+    if not path.exists():
+        report.note(f"{SETTINGS}: already gone")
+        return
+    payload = settings.load(path)
+    env = _env_of(payload)
+    current = env.get(GATEWAY_ENV)
+    if current is None:
+        return
+    if not telemetry.same_gateway(current, value):
+        report.note(f"{SETTINGS}: env.{GATEWAY_ENV} changed since install, kept")
+        return
+    previous = record.get("previous")
+    env = dict(env)
+    if isinstance(previous, str) and previous:
+        env[GATEWAY_ENV] = previous
+        report.add("restored", SETTINGS, f"env.{GATEWAY_ENV}")
+    else:
+        env.pop(GATEWAY_ENV)
+        report.add("removed", SETTINGS, f"env.{GATEWAY_ENV}")
+    if env:
+        payload["env"] = env
+    else:
+        payload.pop("env", None)
+    if dry_run:
+        return
+    if not payload and record.get("created_file"):
+        path.unlink()
+    else:
+        settings.save(path, payload)
 
 
 def _apply_md_block(
@@ -1013,6 +1122,9 @@ def _run_uninstall(home: Path, dry_run: bool) -> Report:
         telemetry.uninstall_report(home, None)  # after validation, before the library and team.json are removed
         telemetry.remove_collect_artifacts(home)
 
+    # before hook unmerge: the original-settings digest check expects our env change already gone
+    _remove_gateway(home, loaded.gateway, report, dry_run)
+
     gone: set[Path] = set()
     kept_dirs: set[Path] = set()
     retained: list[manifest.Entry] = []
@@ -1042,6 +1154,7 @@ def _run_uninstall(home: Path, dry_run: bool) -> Report:
         if not dry_run:
             loaded.entries = retained
             loaded.settings_hooks = []
+            loaded.gateway = {}
             loaded.state = manifest.COMPLETE
             loaded.save(home)
         return report
