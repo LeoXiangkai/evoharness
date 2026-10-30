@@ -221,13 +221,15 @@ class _Usage(BaseHTTPRequestHandler):
     status = 200
     body = b"{}"
     seen: list[str] = []
+    routes: dict[str, tuple[int, bytes]] = {}
 
     def do_GET(self):  # noqa: N802
         type(self).seen.append(f"{self.path}|{self.headers.get('Authorization')}")
-        self.send_response(type(self).status)
+        status, body = type(self).routes.get(self.path, (type(self).status, type(self).body))
+        self.send_response(status)
         self.send_header("Content-Type", "application/json")
         self.end_headers()
-        self.wfile.write(type(self).body)
+        self.wfile.write(body)
 
     def log_message(self, *args):
         return
@@ -239,7 +241,7 @@ def usage_server(monkeypatch):
     monkeypatch.setenv("no_proxy", "127.0.0.1,localhost")
     for name in ("ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY"):
         monkeypatch.delenv(name, raising=False)
-    handler = type("H", (_Usage,), {"seen": []})
+    handler = type("H", (_Usage,), {"seen": [], "routes": {}})
     server = HTTPServer(("127.0.0.1", 0), handler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
@@ -362,6 +364,78 @@ def test_doctor_unparseable(tmp_path, usage_server, body):
     home = _doctor_home(tmp_path, usage_server.url, env={"ANTHROPIC_AUTH_TOKEN": BEARER})
     (st, _n, detail), = _run(home)
     assert st == doctor.WARN and detail == "无法解析额度"
+
+
+_PLATFORM_USAGE = json.dumps({"isValid": True, "balance": 5, "remaining": 5, "usage": {}}).encode()
+
+
+def _quota(daily=(0.000101, 200), monthly=(0.000101, 4000), weekly=None):
+    body = {"platform": "anthropic"}
+    for key, pair in (("daily", daily), ("weekly", weekly), ("monthly", monthly)):
+        if pair is not None:
+            body[key] = {"limit_usd": pair[1], "used_usd": pair[0]}
+    return json.dumps(body).encode()
+
+
+def _quota_home(tmp_path, usage_server, quota):
+    usage_server.routes = {"/v1/usage": (200, _PLATFORM_USAGE), "/v1/quota": quota}
+    return _doctor_home(tmp_path, usage_server.url, env={"ANTHROPIC_AUTH_TOKEN": BEARER})
+
+
+def test_doctor_platform_quota_pass(tmp_path, usage_server):
+    home = _quota_home(tmp_path, usage_server, (200, _quota(daily=(0.5, 200), monthly=(1.234, 4000))))
+    (status, _n, detail), = _run(home)
+    assert status == doctor.PASS
+    assert detail == "今日 $0.50/$200.00，本月 $1.23/$4000.00"
+    assert usage_server.seen == [f"/v1/usage|Bearer {BEARER}", f"/v1/quota|Bearer {BEARER}"]
+
+
+def test_doctor_platform_quota_null_limit_tier_hidden(tmp_path, usage_server):
+    home = _quota_home(tmp_path, usage_server, (200, _quota(weekly=(3, None))))
+    (status, _n, detail), = _run(home)
+    assert status == doctor.PASS and detail == "今日 $0.00/$200.00，本月 $0.00/$4000.00"
+
+
+def test_doctor_platform_quota_daily_exhausted(tmp_path, usage_server):
+    home = _quota_home(tmp_path, usage_server, (200, _quota(daily=(200, 200))))
+    (status, _n, detail), = _run(home)
+    assert status == doctor.WARN
+    assert detail.startswith("额度已用完（今日）：") and "今日 $200.00/$200.00" in detail
+
+
+@pytest.mark.parametrize("code", [401, 403])
+def test_doctor_platform_quota_auth_rejected(tmp_path, usage_server, code):
+    home = _quota_home(tmp_path, usage_server, (code, b'{"error":"nope"}'))
+    (status, _n, detail), = _run(home)
+    assert status == doctor.WARN and detail == "key 无效或已停用"
+
+
+def test_doctor_platform_quota_not_found(tmp_path, usage_server):
+    home = _quota_home(tmp_path, usage_server, (404, b"{}"))
+    (status, _n, detail), = _run(home)
+    assert status == doctor.WARN and detail == "无法解析额度（HTTP 404）"
+
+
+def test_doctor_platform_quota_unreachable(tmp_path, usage_server, monkeypatch):
+    home = _quota_home(tmp_path, usage_server, (200, b"{}"))
+    real = doctor._fetch_json
+    monkeypatch.setattr(doctor, "_fetch_json", lambda url, path, token: None if path == "/v1/quota" else real(url, path, token))
+    assert _run(home) == [(doctor.WARN, "team-gateway", "无法解析额度")]
+
+
+@pytest.mark.parametrize("body", [b"not json", b"[]", b"{}", b'{"daily":{"limit_usd":null}}',
+                                  b'{"daily":{"limit_usd":5}}', b'{"daily":{"limit_usd":"5","used_usd":1}}'])
+def test_doctor_platform_quota_unparseable(tmp_path, usage_server, body):
+    home = _quota_home(tmp_path, usage_server, (200, body))
+    (status, _n, detail), = _run(home)
+    assert status == doctor.WARN and detail == "无法解析额度"
+
+
+def test_doctor_subscription_present_skips_quota(tmp_path, usage_server):
+    usage_server.body = _usage()
+    home = _doctor_home(tmp_path, usage_server.url, env={"ANTHROPIC_AUTH_TOKEN": BEARER})
+    _run(home)
+    assert usage_server.seen == [f"/v1/usage|Bearer {BEARER}"]
 
 
 def test_doctor_without_token(tmp_path, usage_server):

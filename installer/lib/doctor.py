@@ -224,9 +224,9 @@ def _otel_probe_row(endpoint: str, headers: dict[str, str]) -> tuple[str, str, s
     return (WARN, OTEL_CHECK, f"采集端返回异常（HTTP {status}）")
 
 
-def _usage_row(url: str, token: str) -> tuple[str, str, str]:
-    host = _host_of(url)
-    request = urllib.request.Request(url + "/v1/usage", headers={"Authorization": f"Bearer {token}", "Accept": "application/json"})
+def _fetch_json(url: str, path: str, token: str) -> tuple[int, object] | None:
+    """GET url+path with the member key; None when the gateway is unreachable."""
+    request = urllib.request.Request(url + path, headers={"Authorization": f"Bearer {token}", "Accept": "application/json"})
     status, body = 0, b""
     try:
         with urllib.request.build_opener(_NoRedirect).open(request, timeout=USAGE_TIMEOUT) as resp:
@@ -240,16 +240,49 @@ def _usage_row(url: str, token: str) -> tuple[str, str, str]:
         finally:
             exc.close()
     except (OSError, http.client.HTTPException, ValueError):  # URLError, timeout and refused connections are OSError
-        return (WARN, GATEWAY_CHECK, f"网关不可达：{host}")
+        return None
     try:
         data = json.loads(body.decode("utf-8")) if body else None
     except (UnicodeError, ValueError, RecursionError):
         data = None
+    return status, data
+
+
+def _usage_row(url: str, token: str) -> tuple[str, str, str]:
+    host = _host_of(url)
+    fetched = _fetch_json(url, "/v1/usage", token)
+    if fetched is None:
+        return (WARN, GATEWAY_CHECK, f"网关不可达：{host}")
+    status, data = fetched
     if status in (401, 403) or (status == 200 and _invalid_key(data)):
         return (WARN, GATEWAY_CHECK, "key 无效或已停用")
     if status != 200:
         return (WARN, GATEWAY_CHECK, f"无法解析额度（HTTP {status}）")
+    if isinstance(data, dict) and not isinstance(data.get("subscription"), dict):
+        # user-level platform quotas carry no subscription object; they are served by /v1/quota
+        return _platform_quota_row(url, token)
     return _quota_row(data)
+
+
+def _platform_quota_row(url: str, token: str) -> tuple[str, str, str]:
+    fetched = _fetch_json(url, "/v1/quota", token)
+    if fetched is None:
+        return (WARN, GATEWAY_CHECK, "无法解析额度")
+    status, data = fetched
+    if status in (401, 403):
+        return (WARN, GATEWAY_CHECK, "key 无效或已停用")
+    if status != 200:
+        return (WARN, GATEWAY_CHECK, f"无法解析额度（HTTP {status}）")
+    if not isinstance(data, dict):
+        return (WARN, GATEWAY_CHECK, "无法解析额度")
+    tiers: list[tuple[str, object, object]] = []
+    for key, label in _TIERS:
+        tier = data.get(key)
+        if isinstance(tier, dict) and tier.get("limit_usd") is not None:
+            tiers.append((label, tier.get("limit_usd"), tier.get("used_usd")))
+    if not tiers:
+        return (WARN, GATEWAY_CHECK, "无法解析额度")
+    return _render_quota(tiers, None)
 
 
 def _invalid_key(data: object) -> bool:
@@ -274,24 +307,25 @@ def _num(value: object) -> float | None:
 
 
 def _quota_row(data: object) -> tuple[str, str, str]:
-    unreadable = (WARN, GATEWAY_CHECK, "无法解析额度")
     sub = data.get("subscription") if isinstance(data, dict) else None
     if not isinstance(sub, dict):
-        return unreadable
+        return (WARN, GATEWAY_CHECK, "无法解析额度")
+    tiers = [(label, sub.get(f"{key}_limit_usd"), sub.get(f"{key}_usage_usd"))
+             for key, label in _TIERS if sub.get(f"{key}_limit_usd") is not None]
+    return _render_quota(tiers, data.get("remaining"))
+
+
+def _render_quota(tiers: list[tuple[str, object, object]], remaining_raw: object) -> tuple[str, str, str]:
     parts: list[str] = []
     used_up: list[str] = []
-    for key, label in _TIERS:
-        limit = sub.get(f"{key}_limit_usd")
-        if limit is None:
-            continue
-        limit_n, usage_n = _num(limit), _num(sub.get(f"{key}_usage_usd"))
+    for label, limit, used in tiers:
+        limit_n, usage_n = _num(limit), _num(used)
         if limit_n is None or usage_n is None:
-            return unreadable
+            return (WARN, GATEWAY_CHECK, "无法解析额度")
         parts.append(f"{label} ${usage_n:.2f}/${limit_n:.2f}")
         if usage_n >= limit_n:
             used_up.append(label)
-    remaining = _num(data.get("remaining"))
-    if remaining == 0 and not used_up:
+    if _num(remaining_raw) == 0 and not used_up:
         used_up.append("剩余额度")
     amounts = "，".join(parts) or "未设额度上限"
     if used_up:
