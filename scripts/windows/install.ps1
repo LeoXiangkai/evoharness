@@ -1,4 +1,4 @@
-﻿# Parameters: -RepoDir -HomeDir -NoPrereqs -NoClaude -NoHud -NoCcLauncher -RepoUrl -Mode -CpaUrl -CpaToken -CpaDir -InstallCpa -Adapters
+﻿# Parameters: -RepoDir -HomeDir -NoPrereqs -NoClaude -NoHud -NoCcLauncher -RepoUrl -Mode -CpaUrl -CpaToken -CpaDir -InstallCpa -Adapters -TeamConfig -Channel -OnConflict
 [CmdletBinding()]
 param(
     [string]$RepoDir,
@@ -17,12 +17,15 @@ param(
     [string]$Adapters = "",
     [string]$TeamConfig = "",
     [ValidateSet("", "stable", "beta", "auto")]
-    [string]$Channel = ""
+    [string]$Channel = "",
+    [ValidateSet("", "skip", "backup")]
+    [string]$OnConflict = ""
 )
 
 $ErrorActionPreference = "Stop"
 # ValidateSet ignores case but the Python CLI does not.
 $Channel = $Channel.ToLowerInvariant()
+$OnConflict = $OnConflict.ToLowerInvariant()
 
 function Refresh-Path {
     $machine = [Environment]::GetEnvironmentVariable("Path", "Machine")
@@ -309,6 +312,7 @@ try {
         if ($adapterNames.Count -gt 0) { $installArgs += "--adapters"; $installArgs += (($adapterNames | Select-Object -Unique) -join ",") }
         if ($NoHud) { $installArgs += "--no-hud" }
         if ($Channel) { $installArgs += "--channel"; $installArgs += $Channel }
+        if ($OnConflict) { $installArgs += "--on-conflict"; $installArgs += $OnConflict }
         if (-not [string]::IsNullOrWhiteSpace($TeamConfig)) {
             $installArgs += "--team-config"; $installArgs += $TeamConfig
         }

@@ -139,7 +139,7 @@ py -3 installer/aicj.py selftest
 
 ## 团队安装
 
-加入团队采集（可选，默认不采集）：`python3 installer/aicj.py install --team-config <URL|file://|路径>`（Windows：`install.ps1 -TeamConfig`）。字段见 `docs/telemetry-fields.md`，管理员操作见 `docs/team-telemetry-admin.md`，契约见 `docs/team-telemetry-design.md`。
+加入团队采集（可选，默认不采集）：`python3 installer/aicj.py install --team-config <URL|file://|路径>`（Windows：`install.ps1 -TeamConfig`；成员 settings.json 已有不同的 `env.ANTHROPIC_BASE_URL` 等冲突时加 `-OnConflict backup`，等同 `--on-conflict backup`）。字段见 `docs/telemetry-fields.md`，管理员操作见 `docs/team-telemetry-admin.md`，契约见 `docs/team-telemetry-design.md`。
 
 ## 不破坏用户内容的约定
 
