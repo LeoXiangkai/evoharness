@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import json
+import os
+import shutil
+import stat
 import subprocess
 import sys
 from pathlib import Path
@@ -28,6 +31,17 @@ def isolated_git(tmp_path, monkeypatch):
 
 def git(cwd, *args):
     return subprocess.run(["git", *args], cwd=str(cwd), capture_output=True, text=True, check=True).stdout
+
+
+def rmtree_force(path: Path) -> None:
+    """shutil.rmtree that also removes git's read-only object files on Windows."""
+    def _retry(func, p, _exc):
+        os.chmod(p, stat.S_IWRITE)
+        func(p)
+    if sys.version_info >= (3, 12):
+        shutil.rmtree(path, onexc=_retry)
+    else:
+        shutil.rmtree(path, onerror=_retry)
 
 
 def make_remote(tmp_path: Path, name: str = "remote.git") -> Path:

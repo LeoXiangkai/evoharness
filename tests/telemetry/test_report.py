@@ -6,7 +6,7 @@ import shutil
 import time
 
 import aicj_telemetry as tel
-from .conftest import git, make_remote, remote_files, spool_events, write_log, write_team
+from .conftest import git, make_remote, rmtree_force, remote_files, spool_events, write_log, write_team
 
 CORR = "aicj/lessons/corrections.jsonl"
 
@@ -210,7 +210,7 @@ def test_state_json_fields(claude, team):
     st = json.loads((claude / "aicj/telemetry/state.json").read_text(encoding="utf-8"))
     for k in ("offsets", "upload_offsets", "last_attempt", "last_success", "last_error"):
         assert k in st
-    shutil.rmtree(claude / "aicj/telemetry/collect-repo")
+    rmtree_force(claude / "aicj/telemetry/collect-repo")
     _corrections(claude, n=1, start=20)
     assert tel.run_report(claude, force=True)["uploaded"] == 1  # re-clone works
 
@@ -290,7 +290,7 @@ def test_converted_event_ids_survive_telemetry_dir_wipe(claude, team, remote, tm
 
     before = ids()
     assert len(before) == 3
-    shutil.rmtree(claude / "aicj" / "telemetry")
+    rmtree_force(claude / "aicj" / "telemetry")
     tel.collect(claude)
     assert tel.run_report(claude, force=True)["status"] == "ok"
     assert ids() == before
