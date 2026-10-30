@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -336,4 +337,4 @@ def test_install_event_carries_channel_commit_and_envelope_version(repos, home: 
 
 
 def test_version_file_is_valid_semver() -> None:
-    assert (REPO / "VERSION").read_text(encoding="utf-8") == "0.9.0\n"
+    assert re.fullmatch(r"\d+\.\d+\.\d+\n", (REPO / "VERSION").read_text(encoding="utf-8"))
