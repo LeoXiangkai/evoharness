@@ -12,7 +12,7 @@ from pathlib import Path
 def run(repo: Path, home: Path, *args: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         [sys.executable, str(repo / "installer/aicj.py"), *args, "--home", str(home), "--source", str(repo)],
-        cwd=repo, text=True, capture_output=True,
+        cwd=repo, text=True, encoding="utf-8", capture_output=True,
     )
 
 
