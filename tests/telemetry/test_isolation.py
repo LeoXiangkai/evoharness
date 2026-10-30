@@ -5,6 +5,7 @@ import os
 import stat
 import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -206,7 +207,7 @@ def test_repo_task_lookup_honours_user_git_dir_but_upload_env_does_not(tmp_path,
     elsewhere.mkdir()
     monkeypatch.setenv("GIT_DIR", str(user_repo / ".git"))
     monkeypatch.setenv("GIT_WORK_TREE", str(user_repo))
-    assert tel._local_git(str(elsewhere), "rev-parse", "--show-toplevel", user_env=True) == str(user_repo.resolve())
+    assert Path(tel._local_git(str(elsewhere), "rev-parse", "--show-toplevel", user_env=True)) == user_repo.resolve()
     assert tel._local_git(str(elsewhere), "rev-parse", "--show-toplevel") is None
     assert tel._repo_task(str(elsewhere), "salt") is not None
     env = tel._git_env(None, "u1")

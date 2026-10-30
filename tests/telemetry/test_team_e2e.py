@@ -226,7 +226,7 @@ def test_team_flow_end_to_end(tmp_path):
     assert data["rework_cause"]["r2"]["counts"] == {"B": 1}
     assert data["skill"]["code-review"]["calls"] == 1 and data["ask_user"]["questions"] == 1
     wk = subprocess.run([sys.executable, str(WEEKLY), "--repo", str(clone), "--week", "2026-W44", "--format", "json",
-                         "--min-n", "1"], capture_output=True, text=True, timeout=120)
+                         "--min-n", "1"], capture_output=True, text=True, encoding="utf-8", timeout=120)
     assert wk.returncode == 0, wk.stderr
     weekly = json.loads(wk.stdout)
     assert weekly["metrics"]["rework_share:B"]["value"] == 1.0
