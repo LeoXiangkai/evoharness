@@ -142,6 +142,15 @@ def test_unpushed_local_tag_is_not_a_stable_target(repos, home: Path) -> None:
     assert head_version(clone) == "0.10.0"
 
 
+def test_beta_refuses_local_main_with_unpushed_commits(repos, home: Path) -> None:
+    _work, _origin, clone = repos
+    release_commit(clone, "0.99.0", None)
+    before = git(clone, "rev-parse", "HEAD")
+    result = upgrade(clone, home, "--no-install", "--channel", "beta")
+    assert result.returncode == 2 and "origin/main" in result.stderr and "Traceback" not in result.stderr
+    assert git(clone, "rev-parse", "HEAD") == before
+
+
 def test_downgrade_is_reported_and_performed(repos, home: Path) -> None:
     _work, _origin, clone = repos
     result = upgrade(clone, home, "--no-install")

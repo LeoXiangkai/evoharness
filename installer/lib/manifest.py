@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field
 from pathlib import Path, PurePosixPath, PureWindowsPath
 
+from .release import normalize_channel
 from .util import UserError, iso_now, read_json, write_json
 from .settings import HOOK_PATH_MARK
 
@@ -53,11 +54,6 @@ def safe_rel(raw: str, what: str, allow_root: bool = False) -> str:
     if not parts or ".." in parts or "." in parts or parts[0].lower() not in ALLOWED_ROOTS or (len(parts) < 2 and not allow_root):
         raise UserError(f"manifest {what} is outside the managed directories: {text!r}")
     return "/".join((parts[0].lower(), *parts[1:]))
-
-
-def _channel(value: object) -> str:
-    text = str(value or "").strip().casefold()
-    return text if text in ("stable", "beta") else ""
 
 
 def _framework(value: object) -> dict:
@@ -141,8 +137,8 @@ class Manifest:
                 project=str(options.get("project", "")),
                 enable_hooks=[str(x) for x in options.get("enable_hooks", [])],
                 no_hud=bool(options.get("no_hud", False)),
-                channel=_channel(options.get("channel")),
-                channel_override=_channel(options.get("channel_override")),
+                channel=normalize_channel(options.get("channel")),
+                channel_override=normalize_channel(options.get("channel_override")),
             ),
             entries=[_entry(item) for item in entries],
             settings_hooks=[_hook(item) for item in hooks],

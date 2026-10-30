@@ -21,6 +21,8 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+# ValidateSet ignores case but the Python CLI does not.
+$Channel = $Channel.ToLowerInvariant()
 
 function Refresh-Path {
     $machine = [Environment]::GetEnvironmentVariable("Path", "Machine")
@@ -240,7 +242,8 @@ try {
             Assert-ExitCode "切换仓库地址"
         }
         # A clone made before `upgrade` existed cannot run it yet: one plain fast-forward bootstraps it.
-        if (-not (Select-String -Path (Join-Path $RepoDir "installer\aicj.py") -Pattern 'add_parser\("upgrade"' -Quiet)) {
+        $aicjPy = Join-Path $RepoDir "installer\aicj.py"
+        if (-not (Test-Path $aicjPy) -or -not (Select-String -Path $aicjPy -Pattern 'add_parser\("upgrade"' -Quiet)) {
             & git -C $RepoDir pull --ff-only
             Assert-ExitCode "仓库更新"
         }

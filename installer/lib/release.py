@@ -211,6 +211,9 @@ def checkout(repo: Path, target: Target) -> None:
         return
     if target.channel == "beta":
         _git(repo, "checkout", "main")
-        _git(repo, "pull", "--ff-only", timeout=FETCH_TIMEOUT)
+        # Move to exactly the commit that was reported; a second fetch via pull could move past it.
+        if _git(repo, "merge-base", "--is-ancestor", "HEAD", target.commit, check=False).returncode != 0:
+            raise UserError(f"local main in {repo} has commits not on origin/main; push or reset them before upgrade")
+        _git(repo, "merge", "--ff-only", "-q", target.commit)
     else:
         _git(repo, "checkout", "--detach", f"refs/tags/{target.ref}")

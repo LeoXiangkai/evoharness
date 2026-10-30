@@ -205,8 +205,12 @@ def cmd_upgrade(args: argparse.Namespace) -> int:
         release.checkout(repo, target)
         if args.no_install:
             return 0
-        assert old is not None
-        result = subprocess.run(_install_command(repo, home, old, override or "auto"))
+        if old is None:
+            raise UserError("not installed (no manifest); run `aicj install` first")
+        cmd = _install_command(repo, home, old, override or "auto")
+        if args.team_config.strip():
+            cmd += ["--team-config", args.team_config]  # the reinstall must resolve the same team default
+        result = subprocess.run(cmd)
         telemetry_mod.emit_install(home, repo, "upgrade", result.returncode == 0)
         return result.returncode
     except UserError as exc:
