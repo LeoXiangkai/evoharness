@@ -470,7 +470,19 @@ def test_doctor_base_url_mismatch_shows_host_only(tmp_path, usage_server):
     rows = _run(home)
     assert rows[0][0] == doctor.WARN and rows[0][2].startswith("未接入团队网关")
     assert "api.example.test" in rows[0][2] and "path-with-secret" not in rows[0][2]
-    assert rows[1][0] == doctor.PASS
+    assert len(rows) == 1
+    assert usage_server.seen == []
+
+
+def test_doctor_other_gateway_never_sends_process_env_key(tmp_path, usage_server, monkeypatch):
+    usage_server.body = _usage()
+    monkeypatch.setenv("ANTHROPIC_API_KEY", BEARER)
+    home = _doctor_home(tmp_path, usage_server.url)
+    (home / ".claude/settings.json").write_text(
+        json.dumps({"env": {KEY: "https://api.example.test"}}), encoding="utf-8")
+    rows = doctor._gateway(home)
+    assert len(rows) == 1 and rows[0][0] == doctor.WARN and rows[0][2].startswith("未接入团队网关")
+    assert usage_server.seen == []
 
 
 def test_doctor_does_not_follow_redirect_with_token(tmp_path, usage_server):

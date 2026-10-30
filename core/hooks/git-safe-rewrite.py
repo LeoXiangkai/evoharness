@@ -388,8 +388,6 @@ def main():
         sys.stdout.write(json.dumps({
             "hookSpecificOutput": {
                 "hookEventName": "PreToolUse",
-                "permissionDecision": "allow",
-                "permissionDecisionReason": "git 写命令已改走 git-safe（index.lock 自动重试）",
                 "updatedInput": updated,
             }
         }))

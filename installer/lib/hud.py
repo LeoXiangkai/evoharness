@@ -91,7 +91,7 @@ def _read_object(path: Path) -> dict[str, Any] | None:
     if not path.exists():
         return {}
     try:
-        value = json.loads(path.read_text(encoding="utf-8"))
+        value = json.loads(path.read_text(encoding="utf-8-sig"))
     except (OSError, UnicodeError, json.JSONDecodeError):
         return None
     return value if isinstance(value, dict) else None
@@ -342,9 +342,10 @@ def uninstall(home: Path, record: dict[str, Any], report: Any, dry_run: bool = F
         cache = claude_dir / "plugins/cache/claude-hud"
         if cache.is_dir() and not dry_run:
             shutil.rmtree(cache, ignore_errors=True)
-        launcher = claude_dir / "plugins/claude-hud/statusline.mjs"
-        if launcher.is_file() and not dry_run:
-            launcher.unlink(missing_ok=True)
+        for name in ("statusline.mjs", "statusline.cmd"):  # setup.mjs also writes the .cmd wrapper on Windows
+            launcher = claude_dir / "plugins/claude-hud" / name
+            if launcher.is_file() and not dry_run:
+                launcher.unlink(missing_ok=True)
         for path in (claude_dir / "plugins/installed_plugins.json",):
             if path.is_file() and not dry_run:
                 try:

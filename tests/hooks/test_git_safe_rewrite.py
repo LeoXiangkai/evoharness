@@ -36,8 +36,8 @@ class T(unittest.TestCase):
         self.assertTrue(out, "expected rewrite for %r" % command)
         o = json.loads(out)["hookSpecificOutput"]
         self.assertEqual(o["hookEventName"], "PreToolUse")
-        self.assertEqual(o["permissionDecision"], "allow")
-        self.assertEqual(o["permissionDecisionReason"], "git 写命令已改走 git-safe（index.lock 自动重试）")
+        self.assertNotIn("permissionDecision", o)
+        self.assertNotIn("permissionDecisionReason", o)
         self.assertEqual(o["updatedInput"]["command"], expected)
         return o["updatedInput"]
 
