@@ -135,6 +135,13 @@ def test_new_tag_on_origin_is_fetched_for_stable(repos, home: Path) -> None:
     assert head_version(clone) == "0.10.1"
 
 
+def test_unpushed_local_tag_is_not_a_stable_target(repos, home: Path) -> None:
+    _work, _origin, clone = repos
+    git(clone, "tag", "v9.9.9")
+    assert upgrade(clone, home, "--no-install").returncode == 0
+    assert head_version(clone) == "0.10.0"
+
+
 def test_downgrade_is_reported_and_performed(repos, home: Path) -> None:
     _work, _origin, clone = repos
     result = upgrade(clone, home, "--no-install")

@@ -185,7 +185,9 @@ def resolve_target(repo: Path, channel: str, warnings: list[str]) -> Target:
     if channel == "beta":
         commit = _git(repo, "rev-parse", "--verify", "-q", "refs/remotes/origin/main^{commit}").stdout.strip()
         return Target("beta", "main", commit, _version_at(repo, commit))
-    tags = _git(repo, "tag", "--list").stdout.splitlines()
+    # Ask origin, not local tags: an unpushed tag or one deleted on origin must not become the stable target.
+    listing = _git(repo, "ls-remote", "--tags", "--refs", "origin", timeout=FETCH_TIMEOUT).stdout.splitlines()
+    tags = [line.split("refs/tags/", 1)[1] for line in listing if "refs/tags/" in line]
     tag = highest_tag(tags)
     if tag is None:
         warnings.append("origin 上还没有 vX.Y.Z 发布 tag，stable 通道停在当前提交")

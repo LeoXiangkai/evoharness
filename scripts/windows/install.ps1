@@ -254,7 +254,9 @@ try {
     if ($HomeDir) { $upgradeArgs += "--home"; $upgradeArgs += $HomeDir }
     if ($Channel) { $upgradeArgs += "--channel"; $upgradeArgs += $Channel }
     if (-not [string]::IsNullOrWhiteSpace($TeamConfig)) { $upgradeArgs += "--team-config"; $upgradeArgs += $TeamConfig }
-    & py -3 (Join-Path $RepoDir "installer\aicj.py") @upgradeArgs
+    # upgrade writes warnings to stderr (for example before the first release tag); only the exit code decides.
+    $previous = $ErrorActionPreference; $ErrorActionPreference = "Continue"
+    try { & py -3 (Join-Path $RepoDir "installer\aicj.py") @upgradeArgs } finally { $ErrorActionPreference = $previous }
     Assert-ExitCode "仓库升级"
 
     if ($Mode -eq "worker") {

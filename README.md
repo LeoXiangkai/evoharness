@@ -112,6 +112,7 @@ py -3 installer/aicj.py selftest
 - `--dry-run` 只列出将写入 `C:\Users\<名>\.claude` 的文件；已有同名文件默认跳过，加 `--on-conflict backup` 则备份后覆盖。
 - Windows 默认复制安装：更新用 `py -3 installer/aicj.py upgrade`，它先把源仓库切到通道目标，再按已记录的选项重跑 `install`。
 - 通道：`stable`（默认）跟最新 `vX.Y.Z` 发布 tag，`beta` 跟 `main`；`--channel stable|beta` 指定并记为成员覆盖，`--channel auto` 清除覆盖、回到团队 `team.json` 的 `channel`。`upgrade --check` 只显示当前到目标的版本，不改任何东西。源仓库需是干净的 git 检出，且在 `main` 或 detached HEAD。
+- 0.9.0 之前安装的副本还没有 `upgrade` 命令：先在源仓库执行一次 `git pull --ff-only`，之后再用 `upgrade`（Windows 一键脚本会自动处理）。
 - 版本号见仓库根 `VERSION`；`status` / `doctor` 显示已装版本、通道与提交。
 - 卸载用 `py -3 installer/aicj.py uninstall`，只删除安装清单记录的文件。
 
